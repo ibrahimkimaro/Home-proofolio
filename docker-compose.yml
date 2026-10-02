@@ -1,0 +1,70 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ibrahim_kimaro
+      POSTGRES_PASSWORD: kimmy001
+      POSTGRES_DB: home_proofolio_db
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ibrahim_kimaro -d home_proofolio_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ibrahim_kimaro:kimmy001@db:5432/home_proofolio_db
+      SECRET_KEY: change-me
+      CORS_ORIGINS: '["http://localhost:3000"]'
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+
+  realtime_chat:
+    build: ./realtime_chat
+    restart: unless-stopped
+    environment:
+      MIX_ENV: dev
+      PORT: 4000
+      DATABASE_URL: postgres://ibrahim_kimaro:kimmy001@db:5432/home_proofolio_db
+      SECRET_KEY: change-me  # must equal backend SECRET_KEY (signs chat tokens)
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+      - "4001:4001"
+    volumes:
+      - ./realtime_chat:/app
+      - /app/_build
+      - /app/deps
+    command: sh -c "mix deps.get && mix phx.server"
+
+
+  frontend:
+    build: ./home_profio_frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: ""
+      API_INTERNAL_URL: http://backend:8000
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./home_profio_frontend:/app
+      - /app/node_modules
+      - /app/.next
+
+volumes:
+  db_data:

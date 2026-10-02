@@ -1,0 +1,322 @@
+{
+ "categories": [
+  {
+   "key": "tech",
+   "label": "Tech & Engineering"
+  },
+  {
+   "key": "business",
+   "label": "Business & Finance"
+  },
+  {
+   "key": "science",
+   "label": "Science & Education"
+  },
+  {
+   "key": "creative",
+   "label": "Design & Media"
+  },
+  {
+   "key": "health",
+   "label": "Healthcare & Impact"
+  },
+  {
+   "key": "athletics",
+   "label": "Sports & Athletics"
+  },
+  {
+   "key": "trades",
+   "label": "Operations & Trades"
+  }
+ ],
+ "roles": [
+  {
+   "key": "developer",
+   "label": "Software Developer",
+   "category": "tech",
+   "workType": "developer",
+   "exampleTitle": "Engineered offline-first sync queue for clinic records",
+   "exampleSkills": "TypeScript, React, SQLite",
+   "evidenceHint": "A GitHub repository, PR diff, or live URL"
+  },
+  {
+   "key": "backend-dev",
+   "label": "Backend & API Engineer",
+   "category": "tech",
+   "workType": "developer",
+   "exampleTitle": "Architected high-throughput payment webhook processor",
+   "exampleSkills": "Go, PostgreSQL, Redis, Docker",
+   "evidenceHint": "A repository link, API doc, or benchmark"
+  },
+  {
+   "key": "mobile-dev",
+   "label": "Mobile Developer",
+   "category": "tech",
+   "workType": "developer",
+   "exampleTitle": "Shipped bilingual Android app with low-bandwidth mode",
+   "exampleSkills": "Flutter, Dart, Firebase, Kotlin",
+   "evidenceHint": "Play Store link or GitHub repo"
+  },
+  {
+   "key": "devops-cloud",
+   "label": "DevOps & Cloud Engineer",
+   "category": "tech",
+   "workType": "developer",
+   "exampleTitle": "Automated multi-region CI/CD deployment with 99.9% uptime",
+   "exampleSkills": "Kubernetes, Terraform, AWS, Linux",
+   "evidenceHint": "Infrastructure config repo or uptime audit report"
+  },
+  {
+   "key": "ai-ml",
+   "label": "AI & Machine Learning",
+   "category": "tech",
+   "workType": "research",
+   "exampleTitle": "Fine-tuned Swahili LLM for agricultural disease diagnosis",
+   "exampleSkills": "Python, PyTorch, HuggingFace, NLP",
+   "evidenceHint": "Model repo, notebook, or evaluation benchmark"
+  },
+  {
+   "key": "cybersecurity",
+   "label": "Cybersecurity Analyst",
+   "category": "tech",
+   "workType": "developer",
+   "exampleTitle": "Conducted vulnerability assessment on banking API gateway",
+   "exampleSkills": "Penetration Testing, OWASP, Wireshark, ISO 27001",
+   "evidenceHint": "Redacted audit report or CVE submission link"
+  },
+  {
+   "key": "hardware-eng",
+   "label": "Hardware / Embedded Engineer",
+   "category": "tech",
+   "workType": "developer",
+   "exampleTitle": "Designed solar microgrid controller PCB and firmware",
+   "exampleSkills": "C++, ESP32, KiCAD, IoT Telemetry",
+   "evidenceHint": "Schematic files or circuit photos"
+  },
+  {
+   "key": "accountant",
+   "label": "Accountant & Auditor",
+   "category": "business",
+   "workType": "business",
+   "exampleTitle": "Conducted statutory audit reconciliation for 14,000 transactions",
+   "exampleSkills": "Financial Accounting, Tax Audit, Excel, IFRS",
+   "evidenceHint": "Verified audit sign-off or credential letter"
+  },
+  {
+   "key": "founder",
+   "label": "Founder & Entrepreneur",
+   "category": "business",
+   "workType": "business",
+   "exampleTitle": "Founded community retail hub and scaled to 450 recurring clients",
+   "exampleSkills": "Business Operations, Financial Modeling, Hiring",
+   "evidenceHint": "Commercial registration or traction dashboard"
+  },
+  {
+   "key": "product-manager",
+   "label": "Product Manager",
+   "category": "business",
+   "workType": "business",
+   "exampleTitle": "Led discovery and launch of mobile wallet integration",
+   "exampleSkills": "Product Strategy, User Research, Roadmapping",
+   "evidenceHint": "Product brief, Figma wireframe, or launch post"
+  },
+  {
+   "key": "financial-analyst",
+   "label": "Financial Analyst",
+   "category": "business",
+   "workType": "business",
+   "exampleTitle": "Built discounted cash flow valuation model for solar farm expansion",
+   "exampleSkills": "Valuation, DCF Modeling, Python for Finance",
+   "evidenceHint": "Financial model worksheet or executive deck"
+  },
+  {
+   "key": "legal-compliance",
+   "label": "Legal & Compliance",
+   "category": "business",
+   "workType": "business",
+   "exampleTitle": "Drafted data privacy and cross-border vendor agreement policy",
+   "exampleSkills": "Contract Law, Regulatory Compliance, GDPR",
+   "evidenceHint": "Redacted legal memo or published policy"
+  },
+  {
+   "key": "marketing-growth",
+   "label": "Marketing & Growth",
+   "category": "business",
+   "workType": "business",
+   "exampleTitle": "Grew organic developer signups by 180% via educational content",
+   "exampleSkills": "SEO, Performance Marketing, Content Strategy",
+   "evidenceHint": "Analytics screenshot or campaign case study"
+  },
+  {
+   "key": "student",
+   "label": "Student & Apprentice",
+   "category": "science",
+   "workType": "learner",
+   "exampleTitle": "Built automated study planner for university degree capstone",
+   "exampleSkills": "Academic Research, Presentation, Critical Thinking",
+   "evidenceHint": "Capstone project file, diploma, or science fair certificate"
+  },
+  {
+   "key": "researcher",
+   "label": "Academic Researcher",
+   "category": "science",
+   "workType": "research",
+   "exampleTitle": "Published empirical study on regional water management",
+   "exampleSkills": "Statistical Analysis, Methodology, Peer Review",
+   "evidenceHint": "DOI link, preprint paper, or research dataset"
+  },
+  {
+   "key": "data-scientist",
+   "label": "Data Scientist",
+   "category": "science",
+   "workType": "research",
+   "exampleTitle": "Analyzed demographic transit patterns across coastal metro routes",
+   "exampleSkills": "Pandas, SQL, Scikit-Learn, Data Storytelling",
+   "evidenceHint": "Jupyter notebook or interactive visualization link"
+  },
+  {
+   "key": "educator",
+   "label": "Educator & Teacher",
+   "category": "science",
+   "workType": "learner",
+   "exampleTitle": "Authored interactive STEM curriculum adopted by 8 secondary schools",
+   "exampleSkills": "Curriculum Design, Pedagogy, Mentorship",
+   "evidenceHint": "Lesson plans, workshop slides, or student results summary"
+  },
+  {
+   "key": "environmental",
+   "label": "Environmental Scientist",
+   "category": "science",
+   "workType": "research",
+   "exampleTitle": "Monitored coastal mangrove biodiversity and carbon sequestration",
+   "exampleSkills": "GIS Mapping, Remote Sensing, Field Sampling",
+   "evidenceHint": "GIS map export, field study log, or lab report"
+  },
+  {
+   "key": "designer",
+   "label": "UI/UX & Product Designer",
+   "category": "creative",
+   "workType": "designer",
+   "exampleTitle": "Designed cross-platform financial dashboard with accessible tokens",
+   "exampleSkills": "Figma, Design Systems, Usability Testing",
+   "evidenceHint": "Figma community file, case study, or live app preview"
+  },
+  {
+   "key": "brand-designer",
+   "label": "Brand & Graphic Designer",
+   "category": "creative",
+   "workType": "designer",
+   "exampleTitle": "Created visual identity and packaging system for organic coffee brand",
+   "exampleSkills": "Illustrator, Typography, Packaging Design",
+   "evidenceHint": "Brand guidelines PDF or Behance link"
+  },
+  {
+   "key": "writer",
+   "label": "Writer & Journalist",
+   "category": "creative",
+   "workType": "learner",
+   "exampleTitle": "Wrote investigative series on local renewable microgrid financing",
+   "exampleSkills": "Investigative Journalism, Copywriting, Editing",
+   "evidenceHint": "Published article link or portfolio clipping"
+  },
+  {
+   "key": "videographer",
+   "label": "Videographer & Media Creator",
+   "category": "creative",
+   "workType": "designer",
+   "exampleTitle": "Directed documentary feature on rural youth tech literacy",
+   "exampleSkills": "Cinematography, Color Grading, Video Editing",
+   "evidenceHint": "Vimeo / YouTube link or festival selection certificate"
+  },
+  {
+   "key": "architect",
+   "label": "Architect & Spatial Designer",
+   "category": "creative",
+   "workType": "designer",
+   "exampleTitle": "Designed passive cooling community library blueprint",
+   "exampleSkills": "AutoCAD, BIM, 3D Rendering, Sustainable Architecture",
+   "evidenceHint": "Architectural drawings or 3D renders"
+  },
+  {
+   "key": "doctor",
+   "label": "Doctor & Clinical Officer",
+   "category": "health",
+   "workType": "business",
+   "exampleTitle": "Streamlined maternal triage protocols, reducing wait times by 35%",
+   "exampleSkills": "Clinical Diagnosis, Emergency Triage, Public Health",
+   "evidenceHint": "Institutional credential or clinical case summary"
+  },
+  {
+   "key": "pharmacist",
+   "label": "Pharmacist",
+   "category": "health",
+   "workType": "business",
+   "exampleTitle": "Digitized pharmaceutical cold-chain temperature verification",
+   "exampleSkills": "Pharmacology, Inventory Logistics, Regulatory Standards",
+   "evidenceHint": "Board licensing certificate or operational audit"
+  },
+  {
+   "key": "ngo-leader",
+   "label": "NGO & Community Leader",
+   "category": "health",
+   "workType": "business",
+   "exampleTitle": "Managed clean water distribution initiative benefiting 3,200 households",
+   "exampleSkills": "Grant Administration, Community Mobilization, Impact M&E",
+   "evidenceHint": "Donor impact report or field project audit"
+  },
+  {
+   "key": "athlete",
+   "label": "Footballer & Athlete",
+   "category": "athletics",
+   "workType": "athlete",
+   "exampleTitle": "Completed season as central midfielder with 8 assists and 92% pass accuracy",
+   "exampleSkills": "Tactical Awareness, Stamina, Leadership",
+   "evidenceHint": "Match video highlights or official league score sheet"
+  },
+  {
+   "key": "coach",
+   "label": "Coach & Sports Trainer",
+   "category": "athletics",
+   "workType": "athlete",
+   "exampleTitle": "Trained U-17 regional academy team to tournament championship",
+   "exampleSkills": "Tactical Planning, Player Development, Conditioning",
+   "evidenceHint": "Coaching badge or tournament tournament sheet"
+  },
+  {
+   "key": "supply-chain",
+   "label": "Supply Chain & Logistics",
+   "category": "trades",
+   "workType": "business",
+   "exampleTitle": "Optimized regional freight dispatch, saving 22% in fuel expenditures",
+   "exampleSkills": "Logistics Optimization, Fleet Management, ERP Systems",
+   "evidenceHint": "Dispatch audit or warehouse operational metric"
+  },
+  {
+   "key": "agriculture",
+   "label": "Agriculturalist & Producer",
+   "category": "trades",
+   "workType": "business",
+   "exampleTitle": "Implemented drip-irrigation system yielding 40% higher grain output",
+   "exampleSkills": "Agronomy, Irrigation Engineering, Crop Yield Analysis",
+   "evidenceHint": "Soil audit, harvest yield records, or farm photos"
+  },
+  {
+   "key": "technician",
+   "label": "Electrical / Mechanical Tech",
+   "category": "trades",
+   "workType": "developer",
+   "exampleTitle": "Overhauled commercial backup diesel generator and switchgear",
+   "exampleSkills": "Circuit Diagnostics, Preventive Maintenance, Power Systems",
+   "evidenceHint": "Maintenance sign-off or certification license"
+  },
+  {
+   "key": "other",
+   "label": "General / Multidisciplinary",
+   "category": "trades",
+   "workType": "general",
+   "exampleTitle": "Solved complex cross-functional challenge with verified outcome",
+   "exampleSkills": "Problem Solving, Initiative, Documentation",
+   "evidenceHint": "Any document, screenshot, or supervisor reference"
+  }
+ ]
+}

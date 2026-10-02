@@ -1,17 +1,38 @@
-# Binaries
-proofolio
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
-# Test binary, built with `go test -c`
-*.test
-
-# Output of the go coverage tool
-*.out
-
-# Local environment
-.env
+# Node / Next.js
+node_modules/
+.next/
+*.tsbuildinfo
 .env.local
+.env*.local
+home_profio_frontend/node_modules/
+home_profio_frontend/.next/
+home_profio_frontend/.env.local
+home_profio_frontend/.env*.local
+home_profio_frontend/*.tsbuildinfo
+
+# Python / FastAPI
+__pycache__/
+*.pyc
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.venv/
+backend/*.egg-info/
+backend/.env
+backend/uploads/
+
+# Elixir / Phoenix
+realtime_chat/_build/
+realtime_chat/deps/
+*.dump
+erl_crash.dump
+
+# System / Core dumps
+core
+core.*
+*.log
+.DS_Store
+.image-originals/
+.archive/
+.playwright-mcp/
+.claude/
+.agents/

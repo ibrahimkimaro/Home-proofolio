@@ -1,0 +1,929 @@
+@import "tailwindcss";
+
+/*
+ * `dark:` follows the theme the member chose (data-theme on <html>), not just the OS.
+ * With no explicit choice ("Match device"), it falls back to the OS setting.
+ */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme]), :root:not([data-theme]) *) {
+      @slot;
+    }
+  }
+}
+
+:root {
+  /* Ink — near-black, used for text and solid buttons; one dark section (CTA) */
+  --color-ink: #1d1d1f;
+  --color-ink-700: #1d1d1f;
+  --color-ink-800: #000000;
+
+  /* Paper — Apple-white surfaces */
+  --color-paper: #fbfbfd;
+  --color-paper-dim: #f5f5f7;
+
+  /* Accent — single signature gold, carried into onboarding */
+  --color-brass: #c9a227;
+  --color-brass-dark: #a6841e;
+  --color-berry: #a8384a;
+  --color-berry-dark: #862c3a;
+
+  /* Text on paper */
+  --color-slate: #6e6e73;
+  --color-hairline: #d2d2d7;
+
+  /* Text on ink (the one dark section) */
+  --color-mist: #f5f5f7;
+  --color-mist-dim: #98989d;
+
+  color-scheme: light;
+}
+
+/*
+ * Dark theme. Every component uses semantic tokens, so the theme is a pure
+ * value swap: "paper" surfaces go soft obsidian/dark slate (reducing eye strain),
+ * "ink" goes light, and hairlines remain subtle and clean.
+ */
+:root[data-theme="dark"] {
+  --color-ink: #f0f0f3;
+  --color-ink-700: #f0f0f3;
+  --color-ink-800: #ffffff;
+
+  /* Eye-friendly deep obsidian tone instead of harsh pure black #000000 */
+  --color-paper: #121316;
+  --color-paper-dim: #191b20;
+
+  --color-brass: #e0b93f;
+  --color-brass-dark: #c9a227;
+  --color-berry: #ff6b7f;
+  --color-berry-dark: #ff8d9d;
+
+  --color-slate: #9aa0a6;
+  --color-hairline: #292a30;
+
+  --color-mist: #1d1d1f;
+  --color-mist-dim: #6e6e73;
+
+  color-scheme: dark;
+}
+
+/* Follow the OS setting when the user hasn't picked a theme explicitly. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-ink: #f0f0f3;
+    --color-ink-700: #f0f0f3;
+    --color-ink-800: #ffffff;
+
+    --color-paper: #121316;
+    --color-paper-dim: #191b20;
+
+    --color-brass: #e0b93f;
+    --color-brass-dark: #c9a227;
+    --color-berry: #ff6b7f;
+    --color-berry-dark: #ff8d9d;
+
+    --color-slate: #9aa0a6;
+    --color-hairline: #292a30;
+
+    --color-mist: #1d1d1f;
+    --color-mist-dim: #6e6e73;
+
+    color-scheme: dark;
+  }
+}
+
+/* User-selectable Background Palettes for Eye Comfort */
+:root[data-palette="slate"][data-theme="dark"],
+:root[data-palette="slate"]:not([data-theme="light"]) {
+  --color-paper: #121316;
+  --color-paper-dim: #191b20;
+  --color-hairline: #292a30;
+}
+
+:root[data-palette="olbongo"][data-theme="dark"],
+:root[data-palette="olbongo"]:not([data-theme="light"]) {
+  /* Olbongo deep forest tone */
+  --color-paper: #0a0f0d;
+  --color-paper-dim: #111814;
+  --color-hairline: #1c2720;
+}
+
+:root[data-palette="espresso"][data-theme="dark"],
+:root[data-palette="espresso"]:not([data-theme="light"]) {
+  /* Warm eye-care coffee/espresso tone */
+  --color-paper: #161311;
+  --color-paper-dim: #1f1a17;
+  --color-hairline: #2f2723;
+}
+
+:root[data-palette="midnight"][data-theme="dark"],
+:root[data-palette="midnight"]:not([data-theme="light"]) {
+  /* Deep midnight navy */
+  --color-paper: #0c1017;
+  --color-paper-dim: #131822;
+  --color-hairline: #212938;
+}
+
+:root[data-palette="paper"][data-theme="light"] {
+  --color-paper: #fbfbfd;
+  --color-paper-dim: #f5f5f7;
+  --color-hairline: #d2d2d7;
+}
+
+:root[data-palette="warm-paper"][data-theme="light"] {
+  /* Warm sand reading tone */
+  --color-paper: #f7f4ee;
+  --color-paper-dim: #ede8dc;
+  --color-hairline: #d9d3c5;
+}
+
+@theme inline {
+  --font-display: var(--font-body);
+  --font-body: var(--font-body);
+
+  --color-ink: var(--color-ink);
+  --color-ink-700: var(--color-ink-700);
+  --color-ink-800: var(--color-ink-800);
+  --color-paper: var(--color-paper);
+  --color-paper-dim: var(--color-paper-dim);
+  --color-brass: var(--color-brass);
+  --color-brass-dark: var(--color-brass-dark);
+  --color-berry: var(--color-berry);
+  --color-berry-dark: var(--color-berry-dark);
+  --color-slate: var(--color-slate);
+  --color-hairline: var(--color-hairline);
+  --color-mist: var(--color-mist);
+  --color-mist-dim: var(--color-mist-dim);
+}
+
+html {
+  /* Let native momentum scrolling run at full hardware frame rate */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  overflow-x: hidden;
+}
+
+@layer base {
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+  }
+
+  /* Prevent iOS Safari & mobile browsers from auto-zooming the viewport on focus */
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+
+  @media (min-width: 640px) {
+    input,
+    textarea,
+    select {
+      font-size: 14px;
+    }
+  }
+}
+
+@layer components {
+  .input {
+    @apply h-11 rounded-xl border border-hairline/80 bg-paper/70 backdrop-blur-xl px-3.5 text-base sm:text-sm text-ink-700 outline-none transition-all placeholder:text-slate/60 shadow-2xs;
+    box-shadow: inset 0 1px 2px 0 rgba(0, 0, 0, 0.04), 0 1px 0 0 rgba(255, 255, 255, 0.1);
+  }
+  .input:hover {
+    @apply bg-paper/85 border-slate/40;
+  }
+  .input:focus {
+    @apply border-brass bg-paper/95 ring-2 ring-brass/25 shadow-xs;
+  }
+
+  .btn-glass {
+    @apply relative inline-flex items-center justify-center rounded-full border border-hairline/80 bg-paper/70 backdrop-blur-xl px-4 py-2 text-[13px] font-medium text-ink-700 shadow-2xs transition-all hover:bg-paper/90 hover:border-brass/50 hover:shadow-xs active:scale-[0.98] cursor-pointer;
+    box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.05), inset 0 1px 0 0 rgba(255, 255, 255, 0.35);
+  }
+
+  .btn-glass-primary {
+    @apply relative inline-flex items-center justify-center rounded-full bg-ink px-6 py-3 text-[14px] sm:text-[15px] font-semibold text-paper shadow-md transition-all hover:bg-black hover:shadow-lg active:scale-[0.98] cursor-pointer;
+    box-shadow: 0 6px 18px -4px rgba(0, 0, 0, 0.3), inset 0 1px 0 0 rgba(255, 255, 255, 0.22);
+  }
+
+  .dotgrid {
+    background-image: radial-gradient(rgba(29, 29, 31, 0.08) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  .dotgrid-dark {
+    background-image: radial-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  .glass-panel {
+    background: rgba(251, 251, 253, 0.82);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(210, 210, 215, 0.7);
+  }
+
+  .glass-panel-dark {
+    background: rgba(29, 29, 31, 0.88);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  /* Apple Liquid Glass and Frosted Glass materials for customizable cards */
+  .apple-glass-clean {
+    background: var(--color-paper);
+    border: 1px solid var(--color-hairline);
+    box-shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.04);
+  }
+
+  .apple-glass-frosted {
+    background: rgba(251, 251, 253, 0.72);
+    backdrop-filter: blur(16px) saturate(120%);
+    -webkit-backdrop-filter: blur(16px) saturate(120%);
+    border: 1px solid rgba(210, 210, 215, 0.6);
+    box-shadow: 0 10px 25px -8px rgba(0, 0, 0, 0.06);
+  }
+
+  :root[data-theme="dark"] .apple-glass-frosted,
+  .dark .apple-glass-frosted {
+    background: rgba(26, 28, 35, 0.72);
+    backdrop-filter: blur(16px) saturate(120%);
+    -webkit-backdrop-filter: blur(16px) saturate(120%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 12px 30px -8px rgba(0, 0, 0, 0.35);
+  }
+
+  .apple-glass-liquid {
+    background: rgba(251, 251, 253, 0.55);
+    backdrop-filter: blur(28px) saturate(140%);
+    -webkit-backdrop-filter: blur(28px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.09), inset 0 1px 0 0 rgba(255, 255, 255, 0.9);
+  }
+
+  :root[data-theme="dark"] .apple-glass-liquid,
+  .dark .apple-glass-liquid {
+    background: rgba(26, 28, 35, 0.55);
+    backdrop-filter: blur(28px) saturate(140%);
+    -webkit-backdrop-filter: blur(28px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 18px 45px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+  }
+
+  .apple-card-hover {
+    transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.35s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.35s ease;
+  }
+  .apple-card-hover:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.08);
+    border-color: rgba(201, 162, 39, 0.45);
+  }
+}
+
+@keyframes float-slow {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes float-reverse {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(8px) rotate(-1deg);
+  }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes drift {
+  0%, 100% {
+    transform: translate(0px, 0px) scale(1);
+  }
+  50% {
+    transform: translate(25px, -20px) scale(1.08);
+  }
+}
+
+@keyframes glow {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.75;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes post-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes grow-bar {
+  from {
+    width: 0%;
+  }
+}
+
+.animate-float-slow {
+  animation: float-slow 6s ease-in-out infinite;
+}
+
+.animate-float-reverse {
+  animation: float-reverse 7s ease-in-out infinite;
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 3s ease-in-out infinite;
+}
+
+.animate-drift {
+  animation: drift 18s ease-in-out infinite;
+}
+
+.animate-glow {
+  animation: glow 12s ease-in-out infinite;
+}
+
+.animate-post-in {
+  animation: post-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes orbit {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes orbit-counter {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(-360deg);
+  }
+}
+
+@keyframes hub-ring {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes paper-lift {
+  0%, 8% {
+    opacity: 1;
+    transform: translateY(0) rotate(var(--tilt, 0deg));
+  }
+  26% {
+    opacity: 1;
+    transform: translateY(-6px) rotate(calc(var(--tilt, 0deg) - 1.5deg));
+  }
+  40%, 88% {
+    opacity: 0;
+    transform: translateY(-22px) rotate(calc(var(--tilt, 0deg) - 5deg));
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotate(var(--tilt, 0deg));
+  }
+}
+
+@keyframes record-in {
+  0%, 34% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+  48% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  88% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+}
+
+@keyframes tick-in {
+  0%, 46% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  56% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+  62%, 88% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+
+@keyframes rail-travel {
+  0%, 14% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+  22% {
+    opacity: 1;
+  }
+  44% {
+    opacity: 1;
+    transform: translateX(var(--rail, 100px));
+  }
+  50%, 100% {
+    opacity: 0;
+    transform: translateX(var(--rail, 100px));
+  }
+}
+
+.animate-paper-lift {
+  animation: paper-lift 9s ease-in-out infinite;
+}
+
+.animate-record-in {
+  animation: record-in 9s ease-in-out infinite;
+}
+
+.animate-tick-in {
+  animation: tick-in 9s ease-in-out infinite;
+}
+
+.animate-rail {
+  animation: rail-travel 9s ease-in-out infinite;
+}
+
+.animate-hub-ring {
+  animation: hub-ring 4.5s ease-in-out infinite;
+}
+
+.animate-orbit {
+  animation: orbit 26s linear infinite;
+}
+
+.animate-orbit-counter {
+  animation: orbit-counter 26s linear infinite;
+}
+
+/* Hide the scrollbar on horizontally scrollable strips (used by the journey timeline). */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* App sheets */
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes sheetUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
+@keyframes sheetIn { from { transform: translateX(100%) } to { transform: translateX(0) } }
+@media (prefers-reduced-motion: reduce) {
+  [class*="animate-[sheet"], [class*="animate-[fadeIn"] { animation: none !important; }
+}
+
+/*
+ * Monochrome workspace + public pages (design spec: functional minimalism).
+ * Scoped so the landing page keeps its own look. Utilities read these vars at use-site.
+ */
+.theme-mono {
+  --color-ink: #111111;
+  --color-ink-700: #111111;
+  --color-ink-800: #111111;
+  --color-paper: #ffffff;
+  --color-paper-dim: #fafafa;
+  --color-slate: #6b7280;
+  --color-hairline: #e5e7eb;
+  --color-brass: #111111;
+  --color-brass-dark: #111111;
+  --color-berry: #b91c1c;
+  --color-berry-dark: #991b1b;
+}
+:root[data-theme="dark"] .theme-mono {
+  --color-ink: #fafafa;
+  --color-ink-700: #fafafa;
+  --color-ink-800: #ffffff;
+  --color-paper: #141414;
+  --color-paper-dim: #0a0a0a;
+  --color-slate: #a1a1aa;
+  --color-hairline: #262626;
+  --color-brass: #fafafa;
+  --color-brass-dark: #fafafa;
+  --color-berry: #f87171;
+  --color-berry-dark: #fca5a5;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-mono {
+    --color-ink: #fafafa;
+    --color-ink-700: #fafafa;
+    --color-ink-800: #ffffff;
+    --color-paper: #141414;
+    --color-paper-dim: #0a0a0a;
+    --color-slate: #a1a1aa;
+    --color-hairline: #262626;
+    --color-brass: #fafafa;
+    --color-brass-dark: #fafafa;
+    --color-berry: #f87171;
+    --color-berry-dark: #fca5a5;
+  }
+}
+
+/* Editorial grid paper: the monochrome replacement for colored cover gradients. */
+.cover-mono {
+  background-color: var(--color-paper-dim);
+  background-image:
+    linear-gradient(var(--color-hairline) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-hairline) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: -1px -1px;
+}
+
+/* Portfolio preview card (Home): a light sweep and a looping mini timeline. */
+@keyframes pf-shine {
+  0% { transform: translateX(-130%) skewX(-18deg); }
+  55%, 100% { transform: translateX(260%) skewX(-18deg); }
+}
+@keyframes pf-spine {
+  0% { transform: scaleY(0); }
+  25%, 100% { transform: scaleY(1); }
+}
+@keyframes pf-card {
+  0%, 12% { opacity: 0; transform: translateY(6px); }
+  24%, 86% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: none; }
+}
+.pf-shine { animation: pf-shine 4.5s cubic-bezier(.4, 0, .2, 1) infinite; }
+.pf-spine { transform-origin: top; animation: pf-spine 6s ease-out infinite; }
+.pf-card { animation: pf-card 6s ease-out infinite both; }
+@media (prefers-reduced-motion: reduce) {
+  .pf-shine { display: none; }
+  .pf-spine, .pf-card { animation: none; }
+}
+
+/*
+ * Appearance (Settings > Appearance, also chosen at the end of onboarding). Three independent layers,
+ * each an attribute on <html>, all scoped to .theme-mono (workspace + public pages):
+ *   data-accent  -> text, buttons, active states (--pf-ink; "custom" sets --pf-ink inline)
+ *   data-palette -> background tone for eye comfort (each tone belongs to light or dark)
+ *   data-glass   -> card material: clean (default) | frosted | liquid
+ * Accent values are pre-darkened to keep 4.5:1 text contrast on every light tone.
+ */
+:root[data-accent="brass"] { --pf-ink: #836919; }
+:root[data-accent="emerald"] { --pf-ink: #0a7854; }
+:root[data-accent="berry"] { --pf-ink: #a8384a; }
+:root[data-accent="sky"] { --pf-ink: #0a73a3; }
+:root[data-accent="ocean"] { --pf-ink: #0f3d5e; }
+:root[data-accent="forest"] { --pf-ink: #1f4d36; }
+:root[data-accent="cocoa"] { --pf-ink: #4a3426; }
+:root[data-accent="plum"] { --pf-ink: #4b2a5a; }
+:root[data-accent="clay"] { --pf-ink: #8a3b25; }
+
+:root[data-accent] .theme-mono {
+  --color-ink: var(--pf-ink, #111111);
+  --color-ink-700: var(--pf-ink, #111111);
+  --color-ink-800: var(--pf-ink, #111111);
+  --color-brass: var(--pf-ink, #111111);
+  --color-brass-dark: var(--pf-ink, #111111);
+}
+:root[data-theme="dark"][data-accent] .theme-mono {
+  --color-ink: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
+  --color-ink-700: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
+  --color-ink-800: color-mix(in oklab, var(--pf-ink, #111111) 20%, #ffffff);
+  --color-brass: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
+  --color-brass-dark: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"])[data-accent] .theme-mono {
+    --color-ink: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
+    --color-ink-700: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
+    --color-ink-800: color-mix(in oklab, var(--pf-ink, #111111) 20%, #ffffff);
+    --color-brass: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
+    --color-brass-dark: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
+  }
+}
+
+/* Background tones (same ids as onboarding). paper = cards, paper-dim = page. Each applies in its own theme,
+ * whether that theme was picked explicitly or comes from "Match device". */
+/* Warm Sand: light */
+:root[data-palette="warm-paper"][data-theme="light"] .theme-mono { --color-paper: #fdfbf7; --color-paper-dim: #f3eee4; --color-hairline: #e2dccf; --color-slate: #6f675a; }
+@media (prefers-color-scheme: light) {
+  :root[data-palette="warm-paper"]:not([data-theme]) .theme-mono { --color-paper: #fdfbf7; --color-paper-dim: #f3eee4; --color-hairline: #e2dccf; --color-slate: #6f675a; }
+}
+/* Dark tones */
+:root[data-palette="slate"][data-theme="dark"] .theme-mono { --color-paper: #191b20; --color-paper-dim: #121316; --color-hairline: #292a30; }
+:root[data-palette="olbongo"][data-theme="dark"] .theme-mono { --color-paper: #111814; --color-paper-dim: #0a0f0d; --color-hairline: #1c2720; }
+:root[data-palette="espresso"][data-theme="dark"] .theme-mono { --color-paper: #1f1a17; --color-paper-dim: #161311; --color-hairline: #2f2723; }
+:root[data-palette="midnight"][data-theme="dark"] .theme-mono { --color-paper: #131822; --color-paper-dim: #0c1017; --color-hairline: #212938; }
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="slate"]:not([data-theme]) .theme-mono { --color-paper: #191b20; --color-paper-dim: #121316; --color-hairline: #292a30; }
+  :root[data-palette="olbongo"]:not([data-theme]) .theme-mono { --color-paper: #111814; --color-paper-dim: #0a0f0d; --color-hairline: #1c2720; }
+  :root[data-palette="espresso"]:not([data-theme]) .theme-mono { --color-paper: #1f1a17; --color-paper-dim: #161311; --color-hairline: #2f2723; }
+  :root[data-palette="midnight"]:not([data-theme]) .theme-mono { --color-paper: #131822; --color-paper-dim: #0c1017; --color-hairline: #212938; }
+}
+
+/* Card material. Cards opt in with .pf-surface; glass needs something behind it, so the page gets a soft ambient wash. */
+:root[data-glass="frosted"] .pf-surface,
+:root[data-glass="liquid"] .pf-surface {
+  background-color: color-mix(in oklab, var(--color-paper) 72%, transparent);
+  backdrop-filter: blur(16px) saturate(120%);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+}
+:root[data-glass="liquid"] .pf-surface {
+  background-color: color-mix(in oklab, var(--color-paper) 58%, transparent);
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #ffffff 55%, transparent), 0 10px 30px -12px rgba(0, 0, 0, 0.18);
+}
+:root[data-glass="frosted"] .pf-ambient,
+:root[data-glass="liquid"] .pf-ambient {
+  background-image:
+    radial-gradient(40rem 28rem at 85% -5%, color-mix(in oklab, var(--color-ink) 14%, transparent), transparent 70%),
+    radial-gradient(36rem 26rem at 0% 100%, color-mix(in oklab, var(--color-ink) 10%, transparent), transparent 70%);
+  background-attachment: fixed;
+}
+
+/*
+ * Outside the workspace (landing, login, onboarding, admin) the brand accent is gold (--color-brass).
+ * A chosen accent replaces it there too; with no choice, each page keeps its own look.
+ */
+:root[data-accent] {
+  --color-brass: var(--pf-ink, #111111);
+  --color-brass-dark: var(--pf-ink, #111111);
+}
+:root[data-theme="dark"][data-accent] {
+  --color-brass: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
+  --color-brass-dark: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme])[data-accent] {
+    --color-brass: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
+    --color-brass-dark: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
+  }
+}
+/* Warm Sand under "Match device" on a light OS (the explicit-light rule lives with the other palettes). */
+@media (prefers-color-scheme: light) {
+  :root[data-palette="warm-paper"]:not([data-theme]) {
+    --color-paper: #f7f4ee;
+    --color-paper-dim: #ede8dc;
+    --color-hairline: #d9d3c5;
+  }
+}
+
+/* Text size (Settings > Appearance). Most sizes are px, so scale the page rather than the root font. */
+:root[data-text="small"] body { zoom: 0.92; }
+:root[data-text="large"] body { zoom: 1.1; }
+:root[data-text="xlarge"] body { zoom: 1.2; }
+
+/* Higher contrast: stronger secondary text and edges, everywhere. */
+:root[data-contrast="more"],
+:root[data-contrast="more"] .theme-mono.theme-mono {
+  /* doubled class so it beats background-tone rules */
+  --color-slate: #374151;
+  --color-hairline: #9ca3af;
+}
+:root[data-theme="dark"][data-contrast="more"],
+:root[data-theme="dark"][data-contrast="more"] .theme-mono {
+  --color-slate: #e4e4e7;
+  --color-hairline: #71717a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme])[data-contrast="more"],
+  :root:not([data-theme])[data-contrast="more"] .theme-mono {
+    --color-slate: #e4e4e7;
+    --color-hairline: #71717a;
+  }
+}
+
+/* Reduce motion (Settings > Appearance), on top of the OS setting. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+:root[data-motion="reduce"] .pf-shine { display: none; }
+
+/* Shimmer Loading and Highlight Animations */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.shimmer-skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--color-paper-dim, #f4f4f5);
+}
+
+.shimmer-skeleton::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.25) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: shimmer 1.8s infinite;
+  pointer-events: none;
+}
+
+:root[data-theme="dark"] .shimmer-skeleton::after {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+}
+
+.shimmer-glow {
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer-glow::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.15), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 3s infinite ease-in-out;
+  pointer-events: none;
+}
+
+/* Ambient and interactive smooth animation keyframes */
+html {
+  scroll-behavior: smooth;
+}
+
+@keyframes floatSlow {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-16px) rotate(1.5deg);
+  }
+}
+
+@keyframes floatReverse {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(16px) rotate(-1.5deg);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.08);
+  }
+}
+
+.animate-float-slow {
+  animation: floatSlow 8s ease-in-out infinite;
+}
+
+.animate-float-reverse {
+  animation: floatReverse 10s ease-in-out infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 6s ease-in-out infinite;
+}
+
+/* ========================================================
+   Dialog & Bottom Sheet Smooth Keyframe Animations
+   ======================================================== */
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sheetSlideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0.85;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes modalZoomIn {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-in {
+  animation-duration: 240ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-fill-mode: both;
+}
+
+.fade-in {
+  animation-name: modalFadeIn;
+}
+
+.slide-in-from-bottom {
+  animation-name: sheetSlideUp;
+}
+
+@media (min-width: 640px) {
+  .sm\:zoom-in-95 {
+    animation-name: modalZoomIn;
+  }
+}
+
+
