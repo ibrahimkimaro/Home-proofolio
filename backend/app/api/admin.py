@@ -9,7 +9,9 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import CODE_TTL, require_admin
 from app.core.database import get_db
+from app.models.business import Role
 from app.models.otp import OtpLog
+from app.models.profile import Profile, Visibility
 from app.models.session import Session as SessionModel
 from app.models.user import User
 from app.models.work import WorkItem
@@ -49,12 +51,30 @@ async def get_admin_stats(db: AsyncSession = Depends(get_db)):
 @router.get("/users", response_model=list[AdminUserOut])
 async def list_admin_users(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(User).options(selectinload(User.work_items)).order_by(User.created_at.desc())
+        select(User)
+        .options(selectinload(User.work_items), selectinload(User.profile))
+        .order_by(User.created_at.desc())
     )
-    return [_user_out(u) for u in result.scalars().all()]
+    users = result.scalars().all()
+    user_ids = [u.id for u in users]
+    roles_map: dict[uuid.UUID, list[str]] = {uid: [] for uid in user_ids}
+    if user_ids:
+        role_result = await db.execute(
+            select(Role.user_id, Role.title)
+            .where(Role.user_id.in_(user_ids))
+            .order_by(Role.start_date.desc().nulls_last(), Role.created_at.desc())
+        )
+        for uid, title in role_result.all():
+            if title and title not in roles_map[uid]:
+                roles_map[uid].append(title)
+
+    return [_user_out(u, roles_map.get(u.id, [])) for u in users]
 
 
-def _user_out(u: User) -> AdminUserOut:
+def _user_out(u: User, roles: list[str] | None = None) -> AdminUserOut:
+    roles_list = roles or []
+    headline = u.profile.headline if u.profile else None
+    primary_role = headline or (roles_list[0] if roles_list else None)
     return AdminUserOut(
         id=u.id,
         email=u.email,
@@ -65,6 +85,9 @@ def _user_out(u: User) -> AdminUserOut:
         is_active=u.is_active,
         created_at=u.created_at,
         works_count=len(u.work_items),
+        headline=headline,
+        role=primary_role,
+        roles=roles_list,
     )
 
 
@@ -72,7 +95,7 @@ async def _get_other_user(user_id: uuid.UUID, admin: User, db: AsyncSession) -> 
     if user_id == admin.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot modify your own admin account here")
     result = await db.execute(
-        select(User).options(selectinload(User.work_items)).where(User.id == user_id)
+        select(User).options(selectinload(User.work_items), selectinload(User.profile)).where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
     if user is None:
@@ -89,15 +112,38 @@ async def update_admin_user(
 ):
     user = await _get_other_user(user_id, admin, db)
     changes = payload.model_dump(exclude_none=True)
-    for field, value in changes.items():
-        setattr(user, field, value)
-    if changes.get("is_active") is False:
-        # Suspending takes effect now: sign the member out on every device.
-        await db.execute(delete(SessionModel).where(SessionModel.user_id == user.id))
+    if "is_active" in changes:
+        user.is_active = changes["is_active"]
+        if not user.is_active:
+            await db.execute(delete(SessionModel).where(SessionModel.user_id == user.id))
+    if "is_admin" in changes:
+        user.is_admin = changes["is_admin"]
+    if "fullname" in changes:
+        user.fullname = changes["fullname"]
+    if "headline" in changes:
+        if user.profile:
+            user.profile.headline = changes["headline"].strip() or None
+    if "role_title" in changes:
+        clean_title = changes["role_title"].strip()
+        if clean_title:
+            if user.profile and "headline" not in changes:
+                user.profile.headline = clean_title
+            existing_role = await db.scalar(
+                select(Role).where(Role.user_id == user.id).order_by(Role.created_at.desc()).limit(1)
+            )
+            if existing_role:
+                existing_role.title = clean_title
+            else:
+                db.add(Role(user_id=user.id, title=clean_title, trust="confirmed", visibility=Visibility.PUBLIC))
+
     audit(db, admin, "user.update", user.username, **changes)
     await db.commit()
-    await db.refresh(user, ["work_items"])
-    return _user_out(user)
+    await db.refresh(user, ["work_items", "profile"])
+    role_rows = await db.execute(
+        select(Role.title).where(Role.user_id == user.id).order_by(Role.created_at.desc())
+    )
+    user_roles = [r for r in role_rows.scalars().all() if r]
+    return _user_out(user, user_roles)
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

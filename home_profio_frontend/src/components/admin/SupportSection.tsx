@@ -47,11 +47,18 @@ export function SupportSection({ admin, onError }: { admin: User; onError: (m: s
               className={`flex w-full cursor-pointer items-start gap-3 border-b border-hairline/60 px-4 py-3 text-left transition-colors hover:bg-paper-dim ${open?.topic === t.topic ? "bg-paper-dim" : ""}`}
             >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-[13px] font-bold text-emerald-600">
-                {(t.name || "?")[0].toUpperCase()}
+                {t.is_guest ? "G" : (t.name || "?")[0].toUpperCase()}
               </span>
               <span className="min-w-0 flex-1">
                 <span className="flex items-center justify-between gap-2">
-                  <span className="truncate text-[13px] font-semibold text-ink-800">{t.name}</span>
+                  <span className="flex items-center gap-1.5 truncate text-[13px] font-semibold text-ink-800">
+                    <span className="truncate">{t.name}</span>
+                    {t.is_guest && (
+                      <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                        Guest
+                      </span>
+                    )}
+                  </span>
                   <span className="shrink-0 text-[11px] text-slate">{ago(t.last_at)}</span>
                 </span>
                 <span className="block truncate text-[12px] text-slate">{t.last}</span>
@@ -65,9 +72,16 @@ export function SupportSection({ admin, onError }: { admin: User; onError: (m: s
       <div className="flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-hairline bg-paper">
         {open ? (
           <>
-            <p className="border-b border-hairline px-4 py-3 text-[14px] font-semibold text-ink-800">
-              {open.name} <span className="font-normal text-slate">@{open.username}</span>
-            </p>
+            <div className="border-b border-hairline px-4 py-3">
+              <p className="flex items-center gap-2 text-[14px] font-semibold text-ink-800">
+                {open.name} <span className="font-normal text-slate">@{open.username}</span>
+                {open.is_guest && (
+                  <span className="rounded bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                    Guest Visitor
+                  </span>
+                )}
+              </p>
+            </div>
             <SupportChat key={open.topic} me={me} topic={open.topic} peerName={open.name} />
           </>
         ) : (

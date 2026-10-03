@@ -41,12 +41,14 @@ export function SupportChat({
   topic,
   peerName,
   firstText,
+  guestToken,
   className = "",
 }: {
   me: { id: string; name: string; username: string };
   topic: string;
   peerName: string;
   firstText?: string; // sent once when the conversation opens (the question that triggered the hand-off)
+  guestToken?: string;
   className?: string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -59,6 +61,8 @@ export function SupportChat({
   const lastPing = useRef(0);
   const peerTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pendingFirst = useRef(firstText);
+
+  const { id: myId, name: myName, username: myUsername } = me;
 
   const deliver = useCallback((msg: ChatMessage) => {
     const c = chan.current;
@@ -75,25 +79,26 @@ export function SupportChat({
     (body: string) => {
       const id = newId();
       const msg: ChatMessage = {
-        id, client_id: id, text: body, author_id: me.id, author_name: me.name, author_username: me.username,
+        id, client_id: id, text: body, author_id: myId, author_name: myName, author_username: myUsername,
         timestamp: new Date().toISOString(), status: "sending",
       };
       setMessages((prev) => [...prev, msg]);
       deliver(msg);
     },
-    [me, deliver]
+    [myId, myName, myUsername, deliver]
   );
 
   useEffect(() => {
     let alive = true;
+    if (!topic || !myId) return;
     setOpenTopic(topic);
-    getPhoenixSocket(me.id)
+    getPhoenixSocket(myId, guestToken)
       .then((socket) => {
         if (!alive) return;
         const c = subscribeToConversation(socket, topic, {
           onHistory: (page) => {
             setMessages((prev) => mergeMessages(prev, page.messages));
-            const upTo = Math.max(0, ...page.messages.filter((m) => m.author_id !== me.id && !m.read_at).map((m) => m.seq ?? 0));
+            const upTo = Math.max(0, ...page.messages.filter((m) => m.author_id !== myId && !m.read_at).map((m) => m.seq ?? 0));
             if (upTo) sendChannelReadReceipt(c, upTo);
             if (pendingFirst.current) {
               const t = pendingFirst.current;
@@ -103,19 +108,19 @@ export function SupportChat({
           },
           onMessage: (m) => {
             setMessages((prev) => mergeMessages(prev, [m]));
-            if (m.author_id !== me.id && m.seq) sendChannelReadReceipt(c, m.seq);
-            if (m.author_id !== me.id) setPeerTyping(false);
+            if (m.author_id !== myId && m.seq) sendChannelReadReceipt(c, m.seq);
+            if (m.author_id !== myId) setPeerTyping(false);
           },
           onTyping: (e) => {
-            if (e.user_id === me.id) return;
+            if (e.user_id === myId) return;
             setPeerTyping(e.is_typing);
             clearTimeout(peerTimer.current);
             if (e.is_typing) peerTimer.current = setTimeout(() => setPeerTyping(false), 5000);
           },
           onPresence: () => {},
           onReadReceipt: (r) =>
-            r.reader_id !== me.id &&
-            setMessages((prev) => prev.map((m) => (m.author_id === me.id && m.seq && m.seq <= r.up_to ? { ...m, status: "read", read_at: r.read_at } : m))),
+            r.reader_id !== myId &&
+            setMessages((prev) => prev.map((m) => (m.author_id === myId && m.seq && m.seq <= r.up_to ? { ...m, status: "read", read_at: r.read_at } : m))),
           onReaction: () => {},
           onDeleted: ({ id }) => setMessages((prev) => prev.filter((m) => m.id !== id)),
           onJoinError: (reason) => setError(`Can't reach support: ${reason}`),
@@ -131,9 +136,11 @@ export function SupportChat({
       chan.current = null;
       setOpenTopic("");
     };
-  }, [topic, me, send]);
+  }, [topic, myId, send, guestToken]);
 
-  useEffect(() => bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }), [messages, peerTyping]);
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, peerTyping]);
 
   const onType = (v: string) => {
     setText(v);

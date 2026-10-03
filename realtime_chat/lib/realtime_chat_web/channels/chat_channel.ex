@@ -16,6 +16,20 @@ defmodule RealtimeChatWeb.ChatChannel do
   @msg_burst 30
   @msg_per_sec 2
 
+  # A member removed from a group (InternalController) loses the room right away, not on next rejoin.
+  intercept ["member_removed"]
+
+  @impl true
+  def handle_out("member_removed", %{user_id: id}, socket) do
+    if id == socket.assigns.user_id do
+      push(socket, "removed", %{})
+      {:stop, :normal, socket}
+    else
+      push(socket, "member_removed", %{user_id: id})
+      {:noreply, socket}
+    end
+  end
+
   @impl true
   def join("direct:" <> pair = topic, params, socket) do
     me = socket.assigns.user_id
@@ -30,9 +44,17 @@ defmodule RealtimeChatWeb.ChatChannel do
   end
 
   def join("room:" <> room = topic, params, socket) do
-    if room =~ ~r/^[a-z0-9-]{1,64}$/,
-      do: do_join(topic, params, assign(socket, :recipient, nil)),
-      else: {:error, %{reason: "invalid room"}}
+    cond do
+      not (room =~ ~r/^[a-z0-9-]{1,64}$/) ->
+        {:error, %{reason: "invalid room"}}
+
+      # Rooms are groups: you must have accepted the invitation (or be its creator).
+      not Messages.group_member?(room, socket.assigns.user_id) ->
+        {:error, %{reason: "unauthorized"}}
+
+      true ->
+        do_join(topic, params, assign(socket, :recipient, nil))
+    end
   end
 
   defp do_join(topic, params, socket) do
@@ -54,16 +76,24 @@ defmodule RealtimeChatWeb.ChatChannel do
   @impl true
   def handle_in("new_msg", %{"id" => cid, "text" => text} = p, socket)
       when is_binary(cid) and byte_size(cid) in 1..64 and is_binary(text) do
+    # A file (with an optional caption) or text; never neither.
+    attachment = if p["attachment"], do: Messages.attachment(p["attachment"], socket.assigns.user_id), else: {:ok, nil}
+
     cond do
-      String.trim(text) == "" or String.length(text) > @max_len ->
+      String.length(text) > @max_len or (String.trim(text) == "" and attachment == {:ok, nil}) ->
         {:reply, {:error, %{reason: "message must be 1-#{@max_len} characters"}}, socket}
+
+      match?({:error, _}, attachment) ->
+        {:error, reason} = attachment
+        {:reply, {:error, %{reason: reason}}, socket}
 
       not RateLimit.allow?({:msg, socket.assigns.user_id}, @msg_burst, @msg_per_sec) ->
         Endpoint.broadcast("admin:monitor", "refused", %{})
         {:reply, {:error, %{reason: "slow down: too many messages"}}, socket}
 
       true ->
-        store(cid, text, reply_to(p["reply_to"]), socket)
+        {:ok, att} = attachment
+        store(cid, text, reply_to(p["reply_to"]), att, socket)
     end
   end
 
@@ -76,7 +106,9 @@ defmodule RealtimeChatWeb.ChatChannel do
 
   def handle_in("typing", payload, socket) do
     typing = payload["is_typing"] == true
-    ev = %{is_typing: typing, user_id: socket.assigns.user_id, author_name: socket.assigns.name, topic: socket.topic}
+    # "typing" or "uploading" (a file is on its way): shown as "… is typing" / "… is sending a file".
+    activity = if payload["activity"] == "uploading", do: "uploading", else: "typing"
+    ev = %{is_typing: typing, activity: activity, user_id: socket.assigns.user_id, author_name: socket.assigns.name, topic: socket.topic}
     broadcast_from!(socket, "user_typing", ev)
     # DMs: also to the other person's app, so their chat list shows "typing…" when this chat isn't open.
     if socket.assigns.recipient, do: Endpoint.broadcast("user:" <> socket.assigns.recipient, "typing", ev)
@@ -107,10 +139,10 @@ defmodule RealtimeChatWeb.ChatChannel do
 
   def handle_in(_event, _payload, socket), do: {:noreply, socket}
 
-  defp store(cid, text, reply_to, socket) do
+  defp store(cid, text, reply_to, attachment, socket) do
     t0 = System.monotonic_time(:microsecond)
 
-    case Messages.insert(socket.topic, socket.assigns, cid, text, reply_to, socket.assigns.recipient) do
+    case Messages.insert(socket.topic, socket.assigns, cid, text, reply_to, socket.assigns.recipient, attachment) do
       {:ok, msg} ->
         store_us = System.monotonic_time(:microsecond) - t0
         recipient = socket.assigns.recipient
@@ -128,11 +160,14 @@ defmodule RealtimeChatWeb.ChatChannel do
   # unread (written after the ack, off the hot path; a read receipt clears it).
   defp notify(recipient, msg, socket) do
     Endpoint.broadcast("user:" <> recipient, "notice", msg)
-    Task.start(fn -> Messages.notify(recipient, msg.author_name, socket.topic, msg.text) end)
+    preview = if msg.text == "" and msg.attachment, do: "📎 " <> msg.attachment["filename"], else: msg.text
+    Task.start(fn -> Messages.notify(recipient, msg.author_name, socket.topic, preview) end)
   end
 
-  defp reply_to(%{"id" => id, "text" => t, "author_name" => n}) when is_binary(id) and is_binary(t) and is_binary(n),
-    do: %{"id" => id, "text" => String.slice(t, 0, 200), "author_name" => String.slice(n, 0, 100)}
+  defp reply_to(%{"id" => id, "text" => t, "author_name" => n} = r) when is_binary(id) and is_binary(t) and is_binary(n) do
+    quoted = %{"id" => String.slice(id, 0, 64), "text" => String.slice(t, 0, 200), "author_name" => String.slice(n, 0, 100)}
+    if is_binary(r["author_id"]) and byte_size(r["author_id"]) <= 64, do: Map.put(quoted, "author_id", r["author_id"]), else: quoted
+  end
 
   defp reply_to(_), do: nil
 end

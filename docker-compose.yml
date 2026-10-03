@@ -9,7 +9,7 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ibrahim_kimaro -d home_proofolio_db"]
+      test: [ "CMD-SHELL", "pg_isready -U ibrahim_kimaro -d home_proofolio_db" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -19,8 +19,12 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://ibrahim_kimaro:kimmy001@db:5432/home_proofolio_db
-      SECRET_KEY: change-me
-      CORS_ORIGINS: '["http://localhost:3000"]'
+      # Signs chat tokens and file links. Set a long random value in .env before exposing the app.
+      SECRET_KEY: ${SECRET_KEY:-change-me}
+      CORS_ORIGINS: '["http://localhost:3000", "https://*.devtunnels.ms"]'
+      # Live pushes (group invites, "X joined" lines) go through realtime_chat's /internal/events.
+      REALTIME_INTERNAL_URL: http://realtime_chat:4000
+      WATCHFILES_FORCE_POLLING: "true"
     depends_on:
       db:
         condition: service_healthy
@@ -36,7 +40,10 @@ services:
       MIX_ENV: dev
       PORT: 4000
       DATABASE_URL: postgres://ibrahim_kimaro:kimmy001@db:5432/home_proofolio_db
-      SECRET_KEY: change-me  # must equal backend SECRET_KEY (signs chat tokens)
+      SECRET_KEY: ${SECRET_KEY:-change-me} # must equal backend SECRET_KEY (signs chat tokens)
+      # Calls: signs short-lived TURN credentials; must equal coturn's static-auth-secret below.
+      # In production also set TURN_HOST (coturn's public name/IP) and TURNS_PORT=5349 (TLS).
+      TURN_SECRET: ${TURN_SECRET:-dev-turn-secret-change-me}
     depends_on:
       db:
         condition: service_healthy
@@ -49,13 +56,53 @@ services:
       - /app/deps
     command: sh -c "mix deps.get && mix phx.server"
 
+  # STUN/TURN for voice & video calls: relays the (still end-to-end encrypted) media when two
+  # browsers can't reach each other directly. Credentials are minted per user by realtime_chat.
+  # TURN_EXTERNAL_IP = this machine's address as browsers see it (LAN IP in dev, public IP in prod).
+  # On a Linux server prefer `network_mode: host` (no port mapping) and drop the ports below.
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    command:
+      - -n
+      - --log-file=stdout
+      - --fingerprint
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:-dev-turn-secret-change-me}
+      - --realm=proofolio
+      - --listening-port=3478
+      - --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
+      # One relay port per relayed participant: 200 ports = 100 users all relayed at once.
+      # (Kept below 49152: Windows/Hyper-V reserves blocks of the dynamic range.)
+      - --min-port=40000
+      - --max-port=40199
+      - --total-quota=200
+      - --user-quota=10
+      - --max-bps=3000000
+      - --no-cli
+      - --no-multicast-peers
+      # Never relay into the Docker network (db, backend), link-local/cloud metadata or "this" network.
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "40000-40199:40000-40199/udp"
 
   frontend:
     build: ./home_profio_frontend
     restart: unless-stopped
+    # NEXT_MODE=production (in .env): an optimized build, built when the container starts (1-3 min);
+    # pages are small and fast, but code changes need `docker compose restart frontend`.
+    # NEXT_MODE=dev (default): live reload while editing code, but much heavier, slower pages.
+    command: npm run dev
     environment:
+      NEXT_MODE: ${NEXT_MODE:-dev}
       NEXT_PUBLIC_API_URL: ""
       API_INTERNAL_URL: http://backend:8000
+      # /socket on port 3000 is proxied here, so one HTTPS tunnel to :3000 carries chat + calls too.
+      REALTIME_INTERNAL_URL: http://realtime_chat:4000
       NEXT_PUBLIC_SITE_URL: http://localhost:3000
     depends_on:
       - backend
@@ -64,7 +111,20 @@ services:
     volumes:
       - ./home_profio_frontend:/app
       - /app/node_modules
-      - /app/.next
+
+  # Public HTTPS for the app (phones only allow calls on https pages), chat and call signaling
+  # included: Next proxies /socket to realtime_chat, so the tunnel only needs the frontend.
+  # No account needed: the https://<random>.trycloudflare.com address is printed in
+  # `docker compose logs cloudflared` and changes when this container restarts.
+  # Fixed hostname: create a tunnel in the Cloudflare dashboard (public hostname -> http://frontend:3000),
+  # put its token in .env as CLOUDFLARE_TUNNEL_TOKEN and use:
+  #   command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://frontend:3000
+    depends_on:
+      - frontend
 
 volumes:
   db_data:

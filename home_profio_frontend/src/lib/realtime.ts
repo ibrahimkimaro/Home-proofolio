@@ -1,5 +1,5 @@
 import { Socket, Channel, Presence } from "phoenix";
-import { fetchChatToken } from "@/lib/api";
+import { fetchChatToken, type ChatAttachment } from "@/lib/api";
 
 export interface ChatMessage {
   id: string; // server id once stored; the client_id until then
@@ -18,14 +18,21 @@ export interface ChatMessage {
     id: string;
     text: string;
     author_name: string;
+    author_id?: string; // missing on replies stored before it was recorded
   } | null;
   reactions?: Record<string, string[]>; // emoji -> list of user_ids
+  attachment?: ChatAttachment | null; // a file (image or document); text is then an optional caption
 }
+
+/** One line for a chat list, pop-up or quoted reply: the text, or the file the message carries. */
+export const messagePreview = (m: Pick<ChatMessage, "text" | "attachment">) =>
+  m.text || (m.attachment ? `${m.attachment.content_type.startsWith("image/") ? "📷 Photo" : "📎"} ${m.attachment.filename}` : "");
 
 export interface TypingEvent {
   user_id: string;
   author_name: string;
   is_typing: boolean;
+  activity?: "typing" | "uploading"; // "uploading": a file is on its way
   topic: string;
 }
 
@@ -59,23 +66,29 @@ export interface Reaction {
 function socketUrl() {
   if (process.env.NEXT_PUBLIC_REALTIME_WS_URL) return process.env.NEXT_PUBLIC_REALTIME_WS_URL;
   if (typeof window === "undefined") return "ws://localhost:4000/socket";
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.hostname || "localhost"}:4000/socket`;
+  // Over https (a tunnel or TLS proxy in front of :3000) the socket shares the page's origin:
+  // next.config.ts proxies /socket to Phoenix. Phones need https for the microphone, i.e. for calls.
+  if (window.location.protocol === "https:") return `wss://${window.location.host}/socket`;
+  return `ws://${window.location.hostname || "localhost"}:4000/socket`;
 }
 
 // One socket per signed-in user. Identity is a backend-signed token (GET /chat/token), refreshed
 // every 30 min so automatic reconnects keep working after the 1h expiry.
 let shared: { userId: string; socket: Promise<Socket>; stop: () => void } | null = null;
 
-export function getPhoenixSocket(userId: string): Promise<Socket> {
+export function getPhoenixSocket(userId: string, customToken?: string): Promise<Socket> {
   if (shared?.userId === userId) return shared.socket;
   shared?.stop();
 
-  let token = "";
+  let token = customToken || "";
   let timer: ReturnType<typeof setInterval> | undefined;
-  const socket = fetchChatToken().then((t) => {
+  const tokenPromise = customToken ? Promise.resolve({ token: customToken }) : fetchChatToken();
+
+  const socket = tokenPromise.then((t) => {
     token = t.token;
-    timer = setInterval(() => fetchChatToken().then((t) => (token = t.token)).catch(() => {}), 30 * 60_000);
+    if (!customToken) {
+      timer = setInterval(() => fetchChatToken().then((t) => (token = t.token)).catch(() => {}), 30 * 60_000);
+    }
     const s = new Socket(socketUrl(), { params: () => ({ token }) });
     s.connect();
     return s;
@@ -109,6 +122,8 @@ export function subscribeToConversation(
     onReaction: (reaction: Reaction) => void;
     onDeleted: (data: { id: string }) => void;
     onJoinError: (reason: string) => void;
+    /** Groups: an admin removed me (the server has already closed the channel). */
+    onRemoved?: () => void;
   }
 ): Channel {
   const channel = socket.channel(topic, {});
@@ -128,6 +143,7 @@ export function subscribeToConversation(
   channel.on("messages_read", handlers.onReadReceipt);
   channel.on("msg_reaction", handlers.onReaction);
   channel.on("msg_deleted", handlers.onDeleted);
+  channel.on("removed", () => handlers.onRemoved?.());
 
   channel
     .join()
@@ -141,15 +157,15 @@ export function subscribeToConversation(
 export function sendChannelMessage(channel: Channel, msg: ChatMessage): Promise<ChatMessage> {
   return new Promise((resolve, reject) => {
     channel
-      .push("new_msg", { id: msg.client_id, text: msg.text, reply_to: msg.reply_to })
+      .push("new_msg", { id: msg.client_id, text: msg.text, reply_to: msg.reply_to, attachment: msg.attachment ?? undefined })
       .receive("ok", resolve)
       .receive("error", (err: { reason?: string }) => reject(new Error(err?.reason || "not sent")))
       .receive("timeout", () => reject(new Error("timed out")));
   });
 }
 
-export function sendChannelTyping(channel: Channel, isTyping: boolean) {
-  channel.push("typing", { is_typing: isTyping });
+export function sendChannelTyping(channel: Channel, isTyping: boolean, activity: "typing" | "uploading" = "typing") {
+  channel.push("typing", { is_typing: isTyping, activity });
 }
 
 export function sendChannelReaction(channel: Channel, messageId: string, emoji: string) {
@@ -175,8 +191,8 @@ export function loadOlder(channel: Channel, beforeSeq: number): Promise<Page> {
 // ---------------------------------------------------------------------------------------------
 // Inbox: the signed-in user's own channel "user:<id>", shared by the whole app (one join per
 // socket; Phoenix closes a duplicate join of the same topic). Unread DM counts (from the DB on
-// every (re)join), "typing…" to me in chats I don't have open, who is online, and a notice per
-// new DM for pop-ups.
+// every (re)join), "typing…" to me in chats I don't have open, who is online, a notice per
+// new DM for pop-ups, and incoming calls (src/lib/calls.ts).
 
 export interface Inbox {
   unread: Record<string, number>; // topic -> unread DMs
@@ -184,10 +200,36 @@ export interface Inbox {
   online: Set<string>; // user ids with the app open
 }
 
-type InboxListener = { onChange?: (inbox: Inbox) => void; onNotice?: (msg: ChatMessage) => void };
+/** "incoming_call" rings this tab; "call_handled" (answered in another tab) and "call_ended" stop it. */
+export interface CallInboxEvent {
+  call_id: string;
+  media?: "audio" | "video";
+  from?: { id: string; name: string; username: string };
+  reason?: string;
+}
+
+/** "group_invite": someone invited me (also stored as a notification). "groups_changed": my groups,
+ * roles or notifications changed (joined/left/removed, an invite answered): reload them. */
+export interface GroupInvite {
+  group_id: string;
+  name: string;
+  topic: string;
+  from: string;
+}
+
+type InboxListener = {
+  onChange?: (inbox: Inbox) => void;
+  onNotice?: (msg: ChatMessage) => void;
+  onCall?: (event: "incoming_call" | "call_handled" | "call_ended", payload: CallInboxEvent) => void;
+  onGroupInvite?: (invite: GroupInvite) => void;
+  onGroupsChanged?: () => void;
+  /** The notification bell should reload (a message notification appeared, or its chat was read). */
+  onNotificationsChanged?: () => void;
+};
 
 let inbox: Inbox = { unread: {}, typing: {}, online: new Set() };
 let inboxUser = "";
+let userChannel: Channel | null = null;
 let openTopic = ""; // the chat on screen: its messages are read as they arrive
 const listeners = new Set<InboxListener>();
 
@@ -225,6 +267,13 @@ function startInbox(userId: string) {
         })
       );
       ch.on("online", (p: { ids: string[] }) => setInbox({ online: new Set(p.ids) }));
+      for (const event of ["incoming_call", "call_handled", "call_ended"] as const) {
+        ch.on(event, (p: CallInboxEvent) => listeners.forEach((l) => l.onCall?.(event, p)));
+      }
+      ch.on("group_invite", (p: GroupInvite) => listeners.forEach((l) => l.onGroupInvite?.(p)));
+      ch.on("groups_changed", () => listeners.forEach((l) => l.onGroupsChanged?.()));
+      ch.on("notifications_changed", () => listeners.forEach((l) => l.onNotificationsChanged?.()));
+      userChannel = ch;
       ch.join().receive("ok", (reply: { unread: Record<string, number> }) => setInbox({ unread: without(reply.unread, openTopic) }));
       // Typing pings stop silently when someone closes the tab: expire them.
       setInterval(() => {
@@ -252,6 +301,18 @@ export function setOpenTopic(topic: string) {
 }
 
 export const getOpenTopic = () => openTopic;
+
+/** Push on the user's own channel (e.g. "decline_call"); resolves on the server's ok. */
+export function pushInbox(event: string, payload: object): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!userChannel) return reject(new Error("not connected"));
+    userChannel
+      .push(event, payload)
+      .receive("ok", () => resolve())
+      .receive("error", (e: { reason?: string }) => reject(new Error(e?.reason || "failed")))
+      .receive("timeout", () => reject(new Error("timed out")));
+  });
+}
 
 /** Add or update messages (matched by server id, or by client_id for our own pending ones), in storage order. */
 export function mergeMessages(prev: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {

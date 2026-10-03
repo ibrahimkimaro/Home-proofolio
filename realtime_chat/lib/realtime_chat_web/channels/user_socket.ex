@@ -5,10 +5,11 @@ defmodule RealtimeChatWeb.UserSocket do
   channel "direct:*", RealtimeChatWeb.ChatChannel
   channel "admin:monitor", RealtimeChatWeb.AdminChannel
   channel "user:*", RealtimeChatWeb.UserChannel
+  channel "call:*", RealtimeChatWeb.CallChannel
 
   # Identity comes only from a token the backend signed (GET /chat/token), never from client params.
   @impl true
-  def connect(%{"token" => token}, socket, _connect_info) when is_binary(token) do
+  def connect(%{"token" => token}, socket, connect_info) when is_binary(token) do
     case verify(token) do
       {:ok, c} ->
         {:ok,
@@ -16,7 +17,8 @@ defmodule RealtimeChatWeb.UserSocket do
            user_id: c["sub"],
            name: c["name"] || c["username"],
            username: c["username"],
-           admin: c["admin"] == true
+           admin: c["admin"] == true,
+           host: host(connect_info)
          )}
 
       :error ->
@@ -28,6 +30,16 @@ defmodule RealtimeChatWeb.UserSocket do
 
   @impl true
   def id(socket), do: "user_socket:#{socket.assigns.user_id}"
+
+  # Hostname the browser used (port stripped). Behind Next's /socket proxy that's x-forwarded-host.
+  defp host(connect_info) do
+    forwarded = Enum.find_value(connect_info[:x_headers] || [], fn {k, v} -> k == "x-forwarded-host" && v end)
+
+    case forwarded do
+      h when is_binary(h) and h != "" -> URI.parse("//" <> (h |> String.split(",") |> hd() |> String.trim())).host
+      _ -> connect_info[:uri] && connect_info[:uri].host
+    end
+  end
 
   # Token = base64url(json claims) <> "." <> base64url(HMAC-SHA256(secret, "chat." <> claims_part)).
   def verify(token) do

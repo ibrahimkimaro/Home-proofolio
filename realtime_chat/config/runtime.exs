@@ -16,5 +16,17 @@ config :realtime_chat, :db,
   queue_target: 1_000,
   queue_interval: 5_000
 
+# Calls (RealtimeChat.Calls.ice_servers/2). TURN_SECRET must equal coturn's static-auth-secret; unset =
+# no TURN relay (fine on one LAN, but calls between two strict NATs then can't connect).
+# TURN_HOST: public hostname/IP of coturn (default: the host the browser used to reach this server).
+# TURNS_PORT: TLS port (5349) once coturn has a certificate; gets calls through TLS-only firewalls.
+# STUN_URLS: comma-separated override (default: coturn when TURN is set, plus Google's public STUN).
+config :realtime_chat, :ice,
+  turn_secret: System.get_env("TURN_SECRET"),
+  turn_host: System.get_env("TURN_HOST"),
+  turn_port: String.to_integer(System.get_env("TURN_PORT", "3478")),
+  turns_port: System.get_env("TURNS_PORT"),
+  stun_urls: System.get_env("STUN_URLS")
+
 # Must equal the backend's SECRET_KEY: it signs the chat tokens the backend hands out (GET /chat/token).
 config :realtime_chat, :secret_key, System.get_env("SECRET_KEY", "dev-only-change-me")

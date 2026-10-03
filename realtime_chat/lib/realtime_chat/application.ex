@@ -9,6 +9,8 @@ defmodule RealtimeChat.Application do
       {Phoenix.PubSub, name: RealtimeChat.PubSub},
       {Postgrex, [name: RealtimeChat.DB] ++ Application.fetch_env!(:realtime_chat, :db)},
       RealtimeChatWeb.Presence,
+      {Registry, keys: :unique, name: RealtimeChat.CallRegistry},
+      {DynamicSupervisor, name: RealtimeChat.CallSupervisor, strategy: :one_for_one},
       RealtimeChatWeb.Endpoint
     ]
 

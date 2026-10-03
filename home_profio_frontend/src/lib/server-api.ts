@@ -21,5 +21,5 @@ export const getTemplates = cache(async () => (await getPublic<WorkTemplate[]>("
 /** Absolute URL for a stored file as a browser sees it (for <img> and og:image). */
 export function publicMediaUrl(path: string | null | undefined) {
   if (!path) return null;
-  return path.startsWith("/files/") ? `${SITE_URL}/api${path}` : path;
+  return path.startsWith("/files/") ? `/api${path}` : path;
 }

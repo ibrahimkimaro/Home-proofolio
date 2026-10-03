@@ -1,15 +1,28 @@
 @import "tailwindcss";
 
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
+  background-color: var(--color-paper);
+  color: var(--color-ink-800);
+}
+
+body {
+  background-color: var(--color-paper);
+  color: var(--color-ink-800);
+}
+
 /*
- * `dark:` follows the theme the member chose (data-theme on <html>), not just the OS.
- * With no explicit choice ("Match device"), it falls back to the OS setting.
+ * `dark:` follows the theme the member chose (data-theme on <html>).
+ * Defaults to light mode unless explicitly set to dark.
  */
 @custom-variant dark {
-  &:where([data-theme="dark"], [data-theme="dark"] *) {
+  &:where([data-theme="dark"], [data-theme="dark"] *, html.dark, html.dark *) {
     @slot;
   }
+
   @media (prefers-color-scheme: dark) {
-    &:where(:root:not([data-theme]), :root:not([data-theme]) *) {
+    &:where(:root[data-theme="system"], :root[data-theme="system"] *) {
       @slot;
     }
   }
@@ -70,9 +83,9 @@
   color-scheme: dark;
 }
 
-/* Follow the OS setting when the user hasn't picked a theme explicitly. */
+/* Follow the OS setting only when the user explicitly picked 'system' theme. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root[data-theme="system"] {
     --color-ink: #f0f0f3;
     --color-ink-700: #f0f0f3;
     --color-ink-800: #ffffff;
@@ -97,14 +110,14 @@
 
 /* User-selectable Background Palettes for Eye Comfort */
 :root[data-palette="slate"][data-theme="dark"],
-:root[data-palette="slate"]:not([data-theme="light"]) {
+:root[data-palette="slate"][data-theme="system"] {
   --color-paper: #121316;
   --color-paper-dim: #191b20;
   --color-hairline: #292a30;
 }
 
 :root[data-palette="olbongo"][data-theme="dark"],
-:root[data-palette="olbongo"]:not([data-theme="light"]) {
+:root[data-palette="olbongo"][data-theme="system"] {
   /* Olbongo deep forest tone */
   --color-paper: #0a0f0d;
   --color-paper-dim: #111814;
@@ -112,7 +125,7 @@
 }
 
 :root[data-palette="espresso"][data-theme="dark"],
-:root[data-palette="espresso"]:not([data-theme="light"]) {
+:root[data-palette="espresso"][data-theme="system"] {
   /* Warm eye-care coffee/espresso tone */
   --color-paper: #161311;
   --color-paper-dim: #1f1a17;
@@ -120,7 +133,7 @@
 }
 
 :root[data-palette="midnight"][data-theme="dark"],
-:root[data-palette="midnight"]:not([data-theme="light"]) {
+:root[data-palette="midnight"][data-theme="system"] {
   /* Deep midnight navy */
   --color-paper: #0c1017;
   --color-paper-dim: #131822;
@@ -170,7 +183,11 @@ body {
 }
 
 @layer base {
-  h1, h2, h3, .font-display {
+
+  h1,
+  h2,
+  h3,
+  .font-display {
     font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
     letter-spacing: -0.02em;
     font-weight: 700;
@@ -184,6 +201,7 @@ body {
   }
 
   @media (min-width: 640px) {
+
     input,
     textarea,
     select {
@@ -197,9 +215,11 @@ body {
     @apply h-11 rounded-xl border border-hairline/80 bg-paper/70 backdrop-blur-xl px-3.5 text-base sm:text-sm text-ink-700 outline-none transition-all placeholder:text-slate/60 shadow-2xs;
     box-shadow: inset 0 1px 2px 0 rgba(0, 0, 0, 0.04), 0 1px 0 0 rgba(255, 255, 255, 0.1);
   }
+
   .input:hover {
     @apply bg-paper/85 border-slate/40;
   }
+
   .input:focus {
     @apply border-brass bg-paper/95 ring-2 ring-brass/25 shadow-xs;
   }
@@ -282,6 +302,7 @@ body {
   .apple-card-hover {
     transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.35s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.35s ease;
   }
+
   .apple-card-hover:hover {
     transform: translateY(-4px);
     box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.08);
@@ -290,28 +311,37 @@ body {
 }
 
 @keyframes float-slow {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateY(0px);
   }
+
   50% {
     transform: translateY(-8px);
   }
 }
 
 @keyframes float-reverse {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateY(0px) rotate(0deg);
   }
+
   50% {
     transform: translateY(8px) rotate(-1deg);
   }
 }
 
 @keyframes pulse-subtle {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
     transform: scale(1);
   }
+
   50% {
     opacity: 0.6;
     transform: scale(0.97);
@@ -319,19 +349,25 @@ body {
 }
 
 @keyframes drift {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translate(0px, 0px) scale(1);
   }
+
   50% {
     transform: translate(25px, -20px) scale(1.08);
   }
 }
 
 @keyframes glow {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 0.4;
     transform: scale(1);
   }
+
   50% {
     opacity: 0.75;
     transform: scale(1.15);
@@ -343,6 +379,7 @@ body {
     opacity: 0;
     transform: translateY(8px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -383,6 +420,7 @@ body {
   0% {
     transform: rotate(0deg);
   }
+
   100% {
     transform: rotate(360deg);
   }
@@ -392,16 +430,20 @@ body {
   0% {
     transform: rotate(0deg);
   }
+
   100% {
     transform: rotate(-360deg);
   }
 }
 
 @keyframes hub-ring {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 0.35;
     transform: scale(1);
   }
+
   50% {
     opacity: 0.7;
     transform: scale(1.12);
@@ -409,18 +451,24 @@ body {
 }
 
 @keyframes paper-lift {
-  0%, 8% {
+
+  0%,
+  8% {
     opacity: 1;
     transform: translateY(0) rotate(var(--tilt, 0deg));
   }
+
   26% {
     opacity: 1;
     transform: translateY(-6px) rotate(calc(var(--tilt, 0deg) - 1.5deg));
   }
-  40%, 88% {
+
+  40%,
+  88% {
     opacity: 0;
     transform: translateY(-22px) rotate(calc(var(--tilt, 0deg) - 5deg));
   }
+
   100% {
     opacity: 1;
     transform: translateY(0) rotate(var(--tilt, 0deg));
@@ -428,18 +476,23 @@ body {
 }
 
 @keyframes record-in {
-  0%, 34% {
+
+  0%,
+  34% {
     opacity: 0;
     transform: translateY(8px) scale(0.97);
   }
+
   48% {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+
   88% {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+
   100% {
     opacity: 0;
     transform: translateY(8px) scale(0.97);
@@ -447,18 +500,24 @@ body {
 }
 
 @keyframes tick-in {
-  0%, 46% {
+
+  0%,
+  46% {
     opacity: 0;
     transform: scale(0.4);
   }
+
   56% {
     opacity: 1;
     transform: scale(1.15);
   }
-  62%, 88% {
+
+  62%,
+  88% {
     opacity: 1;
     transform: scale(1);
   }
+
   100% {
     opacity: 0;
     transform: scale(0.4);
@@ -466,18 +525,24 @@ body {
 }
 
 @keyframes rail-travel {
-  0%, 14% {
+
+  0%,
+  14% {
     opacity: 0;
     transform: translateX(0);
   }
+
   22% {
     opacity: 1;
   }
+
   44% {
     opacity: 1;
     transform: translateX(var(--rail, 100px));
   }
-  50%, 100% {
+
+  50%,
+  100% {
     opacity: 0;
     transform: translateX(var(--rail, 100px));
   }
@@ -522,7 +587,10 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
@@ -531,11 +599,42 @@ body {
 }
 
 /* App sheets */
-@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
-@keyframes sheetUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
-@keyframes sheetIn { from { transform: translateX(100%) } to { transform: translateX(0) } }
+@keyframes fadeIn {
+  from {
+    opacity: 0
+  }
+
+  to {
+    opacity: 1
+  }
+}
+
+@keyframes sheetUp {
+  from {
+    transform: translateY(100%)
+  }
+
+  to {
+    transform: translateY(0)
+  }
+}
+
+@keyframes sheetIn {
+  from {
+    transform: translateX(100%)
+  }
+
+  to {
+    transform: translateX(0)
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  [class*="animate-[sheet"], [class*="animate-[fadeIn"] { animation: none !important; }
+
+  [class*="animate-[sheet"],
+  [class*="animate-[fadeIn"] {
+    animation: none !important;
+  }
 }
 
 /*
@@ -555,6 +654,7 @@ body {
   --color-berry: #b91c1c;
   --color-berry-dark: #991b1b;
 }
+
 :root[data-theme="dark"] .theme-mono {
   --color-ink: #fafafa;
   --color-ink-700: #fafafa;
@@ -568,8 +668,9 @@ body {
   --color-berry: #f87171;
   --color-berry-dark: #fca5a5;
 }
+
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .theme-mono {
+  :root[data-theme="system"] .theme-mono {
     --color-ink: #fafafa;
     --color-ink-700: #fafafa;
     --color-ink-800: #ffffff;
@@ -596,24 +697,69 @@ body {
 
 /* Portfolio preview card (Home): a light sweep and a looping mini timeline. */
 @keyframes pf-shine {
-  0% { transform: translateX(-130%) skewX(-18deg); }
-  55%, 100% { transform: translateX(260%) skewX(-18deg); }
+  0% {
+    transform: translateX(-130%) skewX(-18deg);
+  }
+
+  55%,
+  100% {
+    transform: translateX(260%) skewX(-18deg);
+  }
 }
+
 @keyframes pf-spine {
-  0% { transform: scaleY(0); }
-  25%, 100% { transform: scaleY(1); }
+  0% {
+    transform: scaleY(0);
+  }
+
+  25%,
+  100% {
+    transform: scaleY(1);
+  }
 }
+
 @keyframes pf-card {
-  0%, 12% { opacity: 0; transform: translateY(6px); }
-  24%, 86% { opacity: 1; transform: none; }
-  100% { opacity: 0; transform: none; }
+
+  0%,
+  12% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  24%,
+  86% {
+    opacity: 1;
+    transform: none;
+  }
+
+  100% {
+    opacity: 0;
+    transform: none;
+  }
 }
-.pf-shine { animation: pf-shine 4.5s cubic-bezier(.4, 0, .2, 1) infinite; }
-.pf-spine { transform-origin: top; animation: pf-spine 6s ease-out infinite; }
-.pf-card { animation: pf-card 6s ease-out infinite both; }
+
+.pf-shine {
+  animation: pf-shine 4.5s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+
+.pf-spine {
+  transform-origin: top;
+  animation: pf-spine 6s ease-out infinite;
+}
+
+.pf-card {
+  animation: pf-card 6s ease-out infinite both;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .pf-shine { display: none; }
-  .pf-spine, .pf-card { animation: none; }
+  .pf-shine {
+    display: none;
+  }
+
+  .pf-spine,
+  .pf-card {
+    animation: none;
+  }
 }
 
 /*
@@ -624,15 +770,41 @@ body {
  *   data-glass   -> card material: clean (default) | frosted | liquid
  * Accent values are pre-darkened to keep 4.5:1 text contrast on every light tone.
  */
-:root[data-accent="brass"] { --pf-ink: #836919; }
-:root[data-accent="emerald"] { --pf-ink: #0a7854; }
-:root[data-accent="berry"] { --pf-ink: #a8384a; }
-:root[data-accent="sky"] { --pf-ink: #0a73a3; }
-:root[data-accent="ocean"] { --pf-ink: #0f3d5e; }
-:root[data-accent="forest"] { --pf-ink: #1f4d36; }
-:root[data-accent="cocoa"] { --pf-ink: #4a3426; }
-:root[data-accent="plum"] { --pf-ink: #4b2a5a; }
-:root[data-accent="clay"] { --pf-ink: #8a3b25; }
+:root[data-accent="brass"] {
+  --pf-ink: #836919;
+}
+
+:root[data-accent="emerald"] {
+  --pf-ink: #0a7854;
+}
+
+:root[data-accent="berry"] {
+  --pf-ink: #a8384a;
+}
+
+:root[data-accent="sky"] {
+  --pf-ink: #0a73a3;
+}
+
+:root[data-accent="ocean"] {
+  --pf-ink: #0f3d5e;
+}
+
+:root[data-accent="forest"] {
+  --pf-ink: #1f4d36;
+}
+
+:root[data-accent="cocoa"] {
+  --pf-ink: #4a3426;
+}
+
+:root[data-accent="plum"] {
+  --pf-ink: #4b2a5a;
+}
+
+:root[data-accent="clay"] {
+  --pf-ink: #8a3b25;
+}
 
 :root[data-accent] .theme-mono {
   --color-ink: var(--pf-ink, #111111);
@@ -641,6 +813,7 @@ body {
   --color-brass: var(--pf-ink, #111111);
   --color-brass-dark: var(--pf-ink, #111111);
 }
+
 :root[data-theme="dark"][data-accent] .theme-mono {
   --color-ink: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
   --color-ink-700: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
@@ -648,8 +821,9 @@ body {
   --color-brass: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
   --color-brass-dark: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
 }
+
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"])[data-accent] .theme-mono {
+  :root[data-theme="system"][data-accent] .theme-mono {
     --color-ink: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
     --color-ink-700: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
     --color-ink-800: color-mix(in oklab, var(--pf-ink, #111111) 20%, #ffffff);
@@ -661,20 +835,71 @@ body {
 /* Background tones (same ids as onboarding). paper = cards, paper-dim = page. Each applies in its own theme,
  * whether that theme was picked explicitly or comes from "Match device". */
 /* Warm Sand: light */
-:root[data-palette="warm-paper"][data-theme="light"] .theme-mono { --color-paper: #fdfbf7; --color-paper-dim: #f3eee4; --color-hairline: #e2dccf; --color-slate: #6f675a; }
-@media (prefers-color-scheme: light) {
-  :root[data-palette="warm-paper"]:not([data-theme]) .theme-mono { --color-paper: #fdfbf7; --color-paper-dim: #f3eee4; --color-hairline: #e2dccf; --color-slate: #6f675a; }
+:root[data-palette="warm-paper"][data-theme="light"] .theme-mono {
+  --color-paper: #fdfbf7;
+  --color-paper-dim: #f3eee4;
+  --color-hairline: #e2dccf;
+  --color-slate: #6f675a;
 }
+
+@media (prefers-color-scheme: light) {
+  :root[data-palette="warm-paper"][data-theme="system"] .theme-mono {
+    --color-paper: #fdfbf7;
+    --color-paper-dim: #f3eee4;
+    --color-hairline: #e2dccf;
+    --color-slate: #6f675a;
+  }
+}
+
 /* Dark tones */
-:root[data-palette="slate"][data-theme="dark"] .theme-mono { --color-paper: #191b20; --color-paper-dim: #121316; --color-hairline: #292a30; }
-:root[data-palette="olbongo"][data-theme="dark"] .theme-mono { --color-paper: #111814; --color-paper-dim: #0a0f0d; --color-hairline: #1c2720; }
-:root[data-palette="espresso"][data-theme="dark"] .theme-mono { --color-paper: #1f1a17; --color-paper-dim: #161311; --color-hairline: #2f2723; }
-:root[data-palette="midnight"][data-theme="dark"] .theme-mono { --color-paper: #131822; --color-paper-dim: #0c1017; --color-hairline: #212938; }
+:root[data-palette="slate"][data-theme="dark"] .theme-mono {
+  --color-paper: #191b20;
+  --color-paper-dim: #121316;
+  --color-hairline: #292a30;
+}
+
+:root[data-palette="olbongo"][data-theme="dark"] .theme-mono {
+  --color-paper: #111814;
+  --color-paper-dim: #0a0f0d;
+  --color-hairline: #1c2720;
+}
+
+:root[data-palette="espresso"][data-theme="dark"] .theme-mono {
+  --color-paper: #1f1a17;
+  --color-paper-dim: #161311;
+  --color-hairline: #2f2723;
+}
+
+:root[data-palette="midnight"][data-theme="dark"] .theme-mono {
+  --color-paper: #131822;
+  --color-paper-dim: #0c1017;
+  --color-hairline: #212938;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root[data-palette="slate"]:not([data-theme]) .theme-mono { --color-paper: #191b20; --color-paper-dim: #121316; --color-hairline: #292a30; }
-  :root[data-palette="olbongo"]:not([data-theme]) .theme-mono { --color-paper: #111814; --color-paper-dim: #0a0f0d; --color-hairline: #1c2720; }
-  :root[data-palette="espresso"]:not([data-theme]) .theme-mono { --color-paper: #1f1a17; --color-paper-dim: #161311; --color-hairline: #2f2723; }
-  :root[data-palette="midnight"]:not([data-theme]) .theme-mono { --color-paper: #131822; --color-paper-dim: #0c1017; --color-hairline: #212938; }
+  :root[data-palette="slate"][data-theme="system"] .theme-mono {
+    --color-paper: #191b20;
+    --color-paper-dim: #121316;
+    --color-hairline: #292a30;
+  }
+
+  :root[data-palette="olbongo"][data-theme="system"] .theme-mono {
+    --color-paper: #111814;
+    --color-paper-dim: #0a0f0d;
+    --color-hairline: #1c2720;
+  }
+
+  :root[data-palette="espresso"][data-theme="system"] .theme-mono {
+    --color-paper: #1f1a17;
+    --color-paper-dim: #161311;
+    --color-hairline: #2f2723;
+  }
+
+  :root[data-palette="midnight"][data-theme="system"] .theme-mono {
+    --color-paper: #131822;
+    --color-paper-dim: #0c1017;
+    --color-hairline: #212938;
+  }
 }
 
 /* Card material. Cards opt in with .pf-surface; glass needs something behind it, so the page gets a soft ambient wash. */
@@ -684,12 +909,14 @@ body {
   backdrop-filter: blur(16px) saturate(120%);
   -webkit-backdrop-filter: blur(16px) saturate(120%);
 }
+
 :root[data-glass="liquid"] .pf-surface {
   background-color: color-mix(in oklab, var(--color-paper) 58%, transparent);
   backdrop-filter: blur(28px) saturate(150%);
   -webkit-backdrop-filter: blur(28px) saturate(150%);
   box-shadow: inset 0 1px 0 0 color-mix(in oklab, #ffffff 55%, transparent), 0 10px 30px -12px rgba(0, 0, 0, 0.18);
 }
+
 :root[data-glass="frosted"] .pf-ambient,
 :root[data-glass="liquid"] .pf-ambient {
   background-image:
@@ -706,19 +933,22 @@ body {
   --color-brass: var(--pf-ink, #111111);
   --color-brass-dark: var(--pf-ink, #111111);
 }
+
 :root[data-theme="dark"][data-accent] {
   --color-brass: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
   --color-brass-dark: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
 }
+
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme])[data-accent] {
+  :root[data-theme="system"][data-accent] {
     --color-brass: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
     --color-brass-dark: color-mix(in oklab, var(--pf-ink, #111111) 30%, #fafafa);
   }
 }
+
 /* Warm Sand under "Match device" on a light OS (the explicit-light rule lives with the other palettes). */
 @media (prefers-color-scheme: light) {
-  :root[data-palette="warm-paper"]:not([data-theme]) {
+  :root[data-palette="warm-paper"][data-theme="system"] {
     --color-paper: #f7f4ee;
     --color-paper-dim: #ede8dc;
     --color-hairline: #d9d3c5;
@@ -726,9 +956,17 @@ body {
 }
 
 /* Text size (Settings > Appearance). Most sizes are px, so scale the page rather than the root font. */
-:root[data-text="small"] body { zoom: 0.92; }
-:root[data-text="large"] body { zoom: 1.1; }
-:root[data-text="xlarge"] body { zoom: 1.2; }
+:root[data-text="small"] body {
+  zoom: 0.92;
+}
+
+:root[data-text="large"] body {
+  zoom: 1.1;
+}
+
+:root[data-text="xlarge"] body {
+  zoom: 1.2;
+}
 
 /* Higher contrast: stronger secondary text and edges, everywhere. */
 :root[data-contrast="more"],
@@ -737,14 +975,17 @@ body {
   --color-slate: #374151;
   --color-hairline: #9ca3af;
 }
+
 :root[data-theme="dark"][data-contrast="more"],
 :root[data-theme="dark"][data-contrast="more"] .theme-mono {
   --color-slate: #e4e4e7;
   --color-hairline: #71717a;
 }
+
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme])[data-contrast="more"],
-  :root:not([data-theme])[data-contrast="more"] .theme-mono {
+
+  :root[data-theme="system"][data-contrast="more"],
+  :root[data-theme="system"][data-contrast="more"] .theme-mono {
     --color-slate: #e4e4e7;
     --color-hairline: #71717a;
   }
@@ -759,13 +1000,17 @@ body {
   transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
 }
-:root[data-motion="reduce"] .pf-shine { display: none; }
+
+:root[data-motion="reduce"] .pf-shine {
+  display: none;
+}
 
 /* Shimmer Loading and Highlight Animations */
 @keyframes shimmer {
   0% {
     transform: translateX(-100%);
   }
+
   100% {
     transform: translateX(100%);
   }
@@ -789,23 +1034,19 @@ body {
   bottom: 0;
   left: 0;
   transform: translateX(-100%);
-  background-image: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0.25) 50%,
-    rgba(255, 255, 255, 0) 100%
-  );
+  background-image: linear-gradient(90deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.25) 50%,
+      rgba(255, 255, 255, 0) 100%);
   animation: shimmer 1.8s infinite;
   pointer-events: none;
 }
 
 :root[data-theme="dark"] .shimmer-skeleton::after {
-  background-image: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0.08) 50%,
-    rgba(255, 255, 255, 0) 100%
-  );
+  background-image: linear-gradient(90deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.08) 50%,
+      rgba(255, 255, 255, 0) 100%);
 }
 
 .shimmer-glow {
@@ -832,28 +1073,37 @@ html {
 }
 
 @keyframes floatSlow {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateY(0px) rotate(0deg);
   }
+
   50% {
     transform: translateY(-16px) rotate(1.5deg);
   }
 }
 
 @keyframes floatReverse {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateY(0px) rotate(0deg);
   }
+
   50% {
     transform: translateY(16px) rotate(-1.5deg);
   }
 }
 
 @keyframes pulseGlow {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 0.35;
     transform: scale(1);
   }
+
   50% {
     opacity: 0.7;
     transform: scale(1.08);
@@ -879,6 +1129,7 @@ html {
   from {
     opacity: 0;
   }
+
   to {
     opacity: 1;
   }
@@ -889,6 +1140,7 @@ html {
     transform: translateY(100%);
     opacity: 0.85;
   }
+
   to {
     transform: translateY(0);
     opacity: 1;
@@ -900,6 +1152,7 @@ html {
     transform: scale(0.95);
     opacity: 0;
   }
+
   to {
     transform: scale(1);
     opacity: 1;
@@ -926,4 +1179,35 @@ html {
   }
 }
 
+/* Premium Shimmer / Skeleton Animation */
+@keyframes shimmerWave {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
 
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-paper-dim, #f5f5f7) 0%,
+    rgba(210, 210, 215, 0.45) 50%,
+    var(--color-paper-dim, #f5f5f7) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmerWave 1.6s ease-in-out infinite;
+}
+
+[data-theme="dark"] .shimmer,
+html.dark .shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmerWave 1.6s ease-in-out infinite;
+}

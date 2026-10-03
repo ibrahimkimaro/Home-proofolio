@@ -70,7 +70,7 @@ export interface Appearance {
 }
 
 export const DEFAULT_APPEARANCE: Appearance = {
-  theme: "system",
+  theme: "light",
   tone: "neutral",
   accent: "graphite",
   custom: "#2563eb",
@@ -100,7 +100,7 @@ export function readAppearance(): Appearance {
   const accent = get(KEY.accent);
   const glass = get(KEY.glass);
   return {
-    theme: theme === "light" || theme === "dark" ? theme : "system",
+    theme: theme === "dark" || theme === "system" ? theme : "light",
     tone: TONES.some((t) => t.id === tone) || tone === "paper" ? (tone as ToneId) : "neutral",
     accent: accent === "custom" || ACCENTS.some((a) => a.id === accent) ? (accent as AccentId) : "graphite",
     custom: /^#[0-9a-f]{6}$/i.test(get(KEY.custom) ?? "") ? get(KEY.custom)! : "#2563eb",
@@ -162,9 +162,26 @@ export function setSyncEnabled(on: boolean) {
 
 const same = (a: Appearance, b: Appearance) => (Object.keys(DEFAULT_APPEARANCE) as (keyof Appearance)[]).every((k) => a[k] === b[k]);
 
-/** On sign-in: if this account saved an appearance and sync is on, use it on this device too. */
+const ADOPTED = "proofolio-appearance-adopted";
+
+/** On sign-out: the next account to sign in here gets its own saved appearance. */
+export function forgetAdoptedAppearance() {
+  try {
+    sessionStorage.removeItem(ADOPTED);
+  } catch {}
+}
+
+/**
+ * On sign-in: if this account saved an appearance and sync is on, use it on this device too.
+ * Once per browser session: every page re-reads the account, and re-applying it there would undo a
+ * theme just switched on this device (e.g. dark mode turning back to light when changing pages).
+ */
 export function adoptAccountAppearance(saved: Partial<Appearance> | undefined | null) {
   if (!saved || !syncEnabled() || typeof document === "undefined") return;
+  try {
+    if (sessionStorage.getItem(ADOPTED)) return;
+    sessionStorage.setItem(ADOPTED, "1");
+  } catch {}
   const next = { ...DEFAULT_APPEARANCE, ...saved } as Appearance;
   if (!same(next, readAppearance())) applyAppearance(next);
 }

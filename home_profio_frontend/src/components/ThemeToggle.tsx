@@ -2,40 +2,37 @@
 
 import { useEffect, useState } from "react";
 import { Sun, Moon } from "lucide-react";
+import { applyAppearance, readAppearance, syncEnabled, TONES } from "@/lib/appearance";
+import { saveAppearancePreference } from "@/lib/api";
 
 type Theme = "light" | "dark";
 
+const isDarkNow = () => document.documentElement.classList.contains("dark");
+
+/**
+ * Light/dark switch in the headers. Goes through the same appearance settings as Settings >
+ * Appearance (this device + the account when sync is on), so the choice sticks when changing
+ * pages and on other devices instead of being overwritten by the account's older setting.
+ */
 export function ThemeToggle({ className = "" }: { className?: string }) {
   const [theme, setTheme] = useState<Theme | null>(null);
 
   useEffect(() => {
-    const storedTheme = (localStorage.getItem("proofolio-theme") as Theme | null) ?? null;
-    const storedPalette = localStorage.getItem("proofolio-palette");
-    const system: Theme = window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
-    const initialTheme = storedTheme ?? system;
-
-    setTheme(initialTheme);
-    document.documentElement.setAttribute("data-theme", initialTheme);
-    document.documentElement.classList.toggle("dark", initialTheme === "dark");
-
-    if (storedPalette) {
-      document.documentElement.setAttribute("data-palette", storedPalette);
-    }
+    // Whatever the pre-paint script in app/layout.tsx (or an account appearance) already applied.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading the DOM after mount
+    setTheme(isDarkNow() ? "dark" : "light");
   }, []);
 
   function toggle() {
-    const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    document.documentElement.setAttribute("data-theme", next);
-    document.documentElement.classList.toggle("dark", next === "dark");
-
-    try {
-      localStorage.setItem("proofolio-theme", next);
-    } catch {
-      // storage unavailable
-    }
+    const nextTheme: Theme = (theme ?? (isDarkNow() ? "dark" : "light")) === "dark" ? "light" : "dark";
+    const current = readAppearance();
+    // A dark-only background tone can't stay on in light mode (and vice versa): fall back to neutral.
+    const tone = TONES.find((t) => t.id === current.tone);
+    const next = { ...current, theme: nextTheme, tone: tone && tone.theme !== nextTheme ? "neutral" : current.tone } as typeof current;
+    applyAppearance(next);
+    setTheme(nextTheme);
+    // Signed-out pages (login, onboarding) just get a 401 here, which is fine: the device keeps it.
+    if (syncEnabled()) saveAppearancePreference(next).catch(() => {});
   }
 
   const isDark = theme === "dark";

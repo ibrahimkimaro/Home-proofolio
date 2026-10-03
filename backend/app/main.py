@@ -15,6 +15,9 @@ from app.api.businesses import router as businesses_router
 from app.api.settings import router as settings_router
 from app.api.social import router as social_router
 from app.api.support import router as support_router
+from app.api.groups import router as groups_router
+from app.api.chat_files import router as chat_files_router
+from app.api.cv import router as cv_router
 from app.api.me import router as me_router
 from app.api.notifications import router as notifications_router
 from app.api.admin_manage import router as admin_manage_router
@@ -34,7 +37,7 @@ app = FastAPI(title="HOME PROOFOLIO API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|([a-z0-9-]+\.)*devtunnels\.ms|([a-z0-9-]+\.)*trycloudflare\.com)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -76,6 +79,9 @@ app.include_router(settings_router)
 app.include_router(businesses_router)
 app.include_router(social_router)
 app.include_router(support_router)
+app.include_router(groups_router)
+app.include_router(chat_files_router)
+app.include_router(cv_router)
 app.include_router(uploads_router)
 app.include_router(GraphQLRouter(schema, context_getter=get_context), prefix="/graphql")
 

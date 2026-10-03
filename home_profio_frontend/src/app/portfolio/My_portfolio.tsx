@@ -19,7 +19,6 @@ import {
   Briefcase,
   ArrowRight,
   Layers,
-  Terminal as TerminalIcon,
   Server,
   Workflow,
   CheckCircle2,
@@ -39,8 +38,8 @@ import {
   Share2,
   BadgeCheck,
 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { ShareCardButton } from "@/components/app/ShareCard";
-import { PortfolioAssistant } from "@/components/app/PortfolioAssistant";
 import {
   fetchCurrentUser,
   fetchPortfolio,
@@ -283,38 +282,7 @@ export default function MyPortfolio({
     [works]
   );
 
-  // Instant answers for the assistant widget (people go to live support instead).
-  const assistantReply = (userText: string) => {
-    {
-      const titles = (list: Work[]) => list.slice(0, 3).map((w) => `“${w.title}”`).join(", ");
-      let reply = `${displayName} has ${works.length} ${works.length === 1 ? "piece" : "pieces"} of work and ${totalProofs} ${totalProofs === 1 ? "proof" : "proofs"} on Home Proofolio.`;
-      const lower = userText.toLowerCase();
 
-      if (lower.includes("contact") || lower.includes("hire") || lower.includes("email")) {
-        reply = contactEmailAddress
-          ? `You can email ${displayName} at ${contactEmailAddress}.`
-          : `${displayName} hasn't shared a public contact email. You can follow them on Home Proofolio.`;
-      } else if (lower.includes("problem") || lower.includes("troubleshoot") || lower.includes("bug")) {
-        reply = problemWorks.length
-          ? `${displayName} has recorded ${problemWorks.length} solved ${problemWorks.length === 1 ? "problem" : "problems"}, including ${titles(problemWorks)}.`
-          : `${displayName} hasn't shared any solved problems yet.`;
-      } else if (lower.includes("article") || lower.includes("read") || lower.includes("learn")) {
-        reply = learningWorks.length
-          ? `${displayName} has shared ${learningWorks.length} learning ${learningWorks.length === 1 ? "entry" : "entries"}, including ${titles(learningWorks)}.`
-          : `${displayName} hasn't shared any learning entries yet.`;
-      } else if (lower.includes("skill") || lower.includes("stack") || lower.includes("tech")) {
-        reply = skillStats.length
-          ? `Skills backed by ${displayName}'s work: ${skillStats.slice(0, 6).map((k) => k.name).join(", ")}.`
-          : `${displayName} hasn't linked skills to their work yet.`;
-      } else if (lower.includes("experience") || lower.includes("career") || lower.includes("job")) {
-        reply = roles.length
-          ? `${displayName}'s roles: ${roles.slice(0, 3).map((r) => (r.organization ? `${r.title} at ${r.organization}` : r.title)).join("; ")}.`
-          : `${displayName} hasn't added any roles yet.`;
-      }
-
-      return reply;
-    }
-  };
 
   const handleContactSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -324,6 +292,17 @@ export default function MyPortfolio({
     const body = `${contactMsg}\n\n${contactName}${contactEmail ? ` (${contactEmail})` : ""}`;
     window.location.href = `mailto:${contactEmailAddress}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     setContactSubmitted(true);
+  };
+
+  const scrollToSection = (e: React.MouseEvent<HTMLAnchorElement>, id: string) => {
+    if (id.startsWith("#")) {
+      e.preventDefault();
+      const el = document.querySelector(id);
+      if (el) {
+        const top = el.getBoundingClientRect().top + window.scrollY - 76;
+        window.scrollTo({ top, behavior: "smooth" });
+      }
+    }
   };
 
   const isDarkMode =
@@ -362,28 +341,25 @@ export default function MyPortfolio({
 
           {/* Desktop Anchor Nav Links */}
           <div className="hidden lg:flex items-center gap-5 xl:gap-7 text-xs xl:text-[13px] font-bold text-neutral-600 dark:text-neutral-300">
-            <a href="#home" className="hover:text-neutral-950 dark:hover:text-white transition-colors">
+            <a href="#home" onClick={(e) => scrollToSection(e, "#home")} className="hover:text-neutral-950 dark:hover:text-white transition-colors cursor-pointer">
               Home
             </a>
-            <a href="#about" className="hover:text-neutral-950 dark:hover:text-white transition-colors">
+            <a href="#about" onClick={(e) => scrollToSection(e, "#about")} className="hover:text-neutral-950 dark:hover:text-white transition-colors cursor-pointer">
               About
             </a>
-            <a href="#experience" className="hover:text-neutral-950 dark:hover:text-white transition-colors">
+            <a href="#experience" onClick={(e) => scrollToSection(e, "#experience")} className="hover:text-neutral-950 dark:hover:text-white transition-colors cursor-pointer">
               Experience
             </a>
-            <a href="#projects" className="hover:text-neutral-950 dark:hover:text-white transition-colors">
+            <a href="#projects" onClick={(e) => scrollToSection(e, "#projects")} className="hover:text-neutral-950 dark:hover:text-white transition-colors cursor-pointer">
               Works
             </a>
-            <a href="#problems" className="hover:text-neutral-950 dark:hover:text-white transition-colors">
+            <a href="#problems" onClick={(e) => scrollToSection(e, "#problems")} className="hover:text-neutral-950 dark:hover:text-white transition-colors cursor-pointer">
               Problems Solved
             </a>
-            <a href="#articles" className="hover:text-neutral-950 dark:hover:text-white transition-colors">
+            <a href="#articles" onClick={(e) => scrollToSection(e, "#articles")} className="hover:text-neutral-950 dark:hover:text-white transition-colors cursor-pointer">
               Articles
             </a>
-            <a href="#terminal" className="hover:text-neutral-950 dark:hover:text-white transition-colors">
-              Terminal
-            </a>
-            <a href="#contact" className="hover:text-neutral-950 dark:hover:text-white transition-colors">
+            <a href="#contact" onClick={(e) => scrollToSection(e, "#contact")} className="hover:text-neutral-950 dark:hover:text-white transition-colors cursor-pointer">
               Contact
             </a>
           </div>
@@ -448,31 +424,28 @@ export default function MyPortfolio({
                     <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700">
                       <button
                         onClick={() => handleThemeChange("light")}
-                        className={`py-1.5 rounded-lg font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1 ${
-                          appearance?.theme === "light"
-                            ? "bg-white text-neutral-950 shadow-xs"
-                            : "text-neutral-600 dark:text-neutral-300 hover:text-neutral-950"
-                        }`}
+                        className={`py-1.5 rounded-lg font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1 ${appearance?.theme === "light"
+                          ? "bg-white text-neutral-950 shadow-xs"
+                          : "text-neutral-600 dark:text-neutral-300 hover:text-neutral-950"
+                          }`}
                       >
                         <Sun className="w-3 h-3" /> Light
                       </button>
                       <button
                         onClick={() => handleThemeChange("dark")}
-                        className={`py-1.5 rounded-lg font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1 ${
-                          appearance?.theme === "dark"
-                            ? "bg-[#1f222b] text-white shadow-xs"
-                            : "text-neutral-600 dark:text-neutral-300 hover:text-white"
-                        }`}
+                        className={`py-1.5 rounded-lg font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1 ${appearance?.theme === "dark"
+                          ? "bg-[#1f222b] text-white shadow-xs"
+                          : "text-neutral-600 dark:text-neutral-300 hover:text-white"
+                          }`}
                       >
                         <Moon className="w-3 h-3" /> Dark
                       </button>
                       <button
                         onClick={() => handleThemeChange("system")}
-                        className={`py-1.5 rounded-lg font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1 ${
-                          appearance?.theme === "system"
-                            ? "bg-white dark:bg-[#1f222b] text-neutral-950 dark:text-white shadow-xs"
-                            : "text-neutral-600 dark:text-neutral-300"
-                        }`}
+                        className={`py-1.5 rounded-lg font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1 ${appearance?.theme === "system"
+                          ? "bg-white dark:bg-[#1f222b] text-neutral-950 dark:text-white shadow-xs"
+                          : "text-neutral-600 dark:text-neutral-300"
+                          }`}
                       >
                         <Laptop className="w-3 h-3" /> Auto
                       </button>
@@ -488,11 +461,10 @@ export default function MyPortfolio({
                         <button
                           key={t.id}
                           onClick={() => handleToneChange(t.id)}
-                          className={`flex items-center gap-2 p-2 rounded-xl border text-left transition-all cursor-pointer ${
-                            appearance?.tone === t.id
-                              ? "border-neutral-900 dark:border-white bg-neutral-100 dark:bg-neutral-800 font-bold text-neutral-950 dark:text-white ring-1 ring-neutral-900 dark:ring-white"
-                              : "border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800/60 text-neutral-700 dark:text-neutral-300"
-                          }`}
+                          className={`flex items-center gap-2 p-2 rounded-xl border text-left transition-all cursor-pointer ${appearance?.tone === t.id
+                            ? "border-neutral-900 dark:border-white bg-neutral-100 dark:bg-neutral-800 font-bold text-neutral-950 dark:text-white ring-1 ring-neutral-900 dark:ring-white"
+                            : "border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800/60 text-neutral-700 dark:text-neutral-300"
+                            }`}
                         >
                           <span
                             className="w-3.5 h-3.5 rounded-full border border-neutral-300 dark:border-neutral-600 shrink-0"
@@ -519,28 +491,25 @@ export default function MyPortfolio({
                   <a href="#home" onClick={() => setMobileMenuOpen(false)} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
                     Home
                   </a>
-                  <a href="#about" onClick={() => setMobileMenuOpen(false)} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
+                  <a href="#about" onClick={(e) => { scrollToSection(e, "#about"); setMobileMenuOpen(false); }} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
                     About Me
                   </a>
-                  <a href="#experience" onClick={() => setMobileMenuOpen(false)} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
+                  <a href="#experience" onClick={(e) => { scrollToSection(e, "#experience"); setMobileMenuOpen(false); }} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
                     Experience
                   </a>
-                  <a href="#skills" onClick={() => setMobileMenuOpen(false)} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
+                  <a href="#skills" onClick={(e) => { scrollToSection(e, "#about"); setMobileMenuOpen(false); }} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
                     Tech Stack
                   </a>
-                  <a href="#projects" onClick={() => setMobileMenuOpen(false)} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
+                  <a href="#projects" onClick={(e) => { scrollToSection(e, "#projects"); setMobileMenuOpen(false); }} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
                     Works & Projects
                   </a>
-                  <a href="#problems" onClick={() => setMobileMenuOpen(false)} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
+                  <a href="#problems" onClick={(e) => { scrollToSection(e, "#problems"); setMobileMenuOpen(false); }} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
                     Problems Solved
                   </a>
-                  <a href="#articles" onClick={() => setMobileMenuOpen(false)} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
+                  <a href="#articles" onClick={(e) => { scrollToSection(e, "#articles"); setMobileMenuOpen(false); }} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
                     Articles & Writing
                   </a>
-                  <a href="#terminal" onClick={() => setMobileMenuOpen(false)} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
-                    Proof Terminal
-                  </a>
-                  <a href="#contact" onClick={() => setMobileMenuOpen(false)} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
+                  <a href="#contact" onClick={(e) => { scrollToSection(e, "#contact"); setMobileMenuOpen(false); }} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
                     Contact
                   </a>
                 </motion.div>
@@ -567,8 +536,8 @@ export default function MyPortfolio({
           <div className="absolute bottom-10 -right-32 w-96 h-96 rounded-full bg-purple-500/10 dark:bg-purple-600/5 blur-3xl pointer-events-none animate-float-reverse" />
           <div className="absolute top-12 right-1/4 w-80 h-80 rounded-full bg-emerald-500/10 dark:bg-emerald-600/5 blur-3xl pointer-events-none animate-pulse-glow" />
 
-          {/* Fluid responsive edge-to-edge container */}
-          <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 xl:px-20 2xl:px-28 3xl:px-36 relative z-10">
+          {/* Main Container: 1200px max, centered, responsive padding */}
+          <div className="max-w-6xl mx-auto px-4 md:px-8 relative z-10 w-full">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-16 items-center">
               {/* Left Content Block (Col span 7) */}
               <motion.div
@@ -577,50 +546,42 @@ export default function MyPortfolio({
                 transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
                 className="lg:col-span-7 flex flex-col justify-center order-2 lg:order-1"
               >
-                {/* Verified: only when the account was activated with a delivered code */}
-                {verified && (
-                  <div className="flex items-center gap-2 mb-4">
-                    <BadgeCheck className="h-4 w-4 text-emerald-500" />
-                    <span className="text-[13px] font-semibold text-emerald-700 dark:text-emerald-400">Verified account</span>
-                  </div>
-                )}
-
-                {/* H1 Headline */}
-                <h1 className="text-3xl sm:text-5xl lg:text-6xl xl:text-7xl font-black text-neutral-950 dark:text-white tracking-tight leading-[1.08]">
+                {/* H1 Headline: balanced & refined typography */}
+                <h1 className="text-[19px] sm:text-[21px] font-bold text-neutral-600 dark:text-neutral-400 tracking-tight leading-snug">
                   Hi, I&apos;m{" "}
-                  <span className="text-neutral-950 dark:text-white underline decoration-blue-500/50 decoration-wavy underline-offset-8">
+                  <span className="text-[26px] sm:text-[30px] font-black text-neutral-950 dark:text-white ml-1">
                     {displayName}
                   </span>
                   {verified && (
                     <BadgeCheck
                       role="img"
                       aria-label="Verified account"
-                      className="ml-2 inline-block h-[0.6em] w-[0.6em] -translate-y-[0.1em] text-emerald-500"
+                      className="ml-2 inline-block h-[0.75em] w-[0.75em] -translate-y-[0.1em] text-emerald-500"
                     />
                   )}
                 </h1>
 
-                {/* Sub-headline: Role Switcher */}
-                <div className="h-12 overflow-hidden flex items-center my-3 sm:my-4">
+                {/* Sub-headline: Role Switcher (Proportional & Smooth) */}
+                <div className="h-8 sm:h-9 overflow-hidden flex items-center my-2 sm:my-2.5">
                   <AnimatePresence mode="wait">
                     <motion.div
                       key={currentRoleIndex}
-                      initial={{ y: 16, opacity: 0 }}
+                      initial={{ y: 12, opacity: 0 }}
                       animate={{ y: 0, opacity: 1 }}
-                      exit={{ y: -16, opacity: 0 }}
-                      transition={{ duration: 0.35, ease: "easeInOut" }}
+                      exit={{ y: -12, opacity: 0 }}
+                      transition={{ duration: 0.3, ease: "easeInOut" }}
                       className="flex items-center"
                     >
-                      <span className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-extrabold tracking-tight text-neutral-800 dark:text-neutral-100">
+                      <span className="text-base sm:text-lg md:text-xl font-bold tracking-tight text-neutral-700 dark:text-neutral-200">
                         {roleList[currentRoleIndex]}
                       </span>
-                      <span className="ml-1 text-blue-600 dark:text-brass animate-pulse font-light text-2xl lg:text-3xl">|</span>
+                      <span className="ml-1 text-blue-600 dark:text-brass animate-pulse font-light text-base sm:text-lg">|</span>
                     </motion.div>
                   </AnimatePresence>
                 </div>
 
                 {/* Bio Block */}
-                <p className="text-base sm:text-lg leading-relaxed max-w-2xl text-neutral-700 dark:text-neutral-300 my-4 sm:my-6 font-medium">
+                <p className="text-sm sm:text-base leading-relaxed max-w-xl text-neutral-600 dark:text-neutral-300 my-3 sm:my-4 font-medium">
                   {bio}
                 </p>
 
@@ -628,7 +589,8 @@ export default function MyPortfolio({
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 mt-2">
                   <a
                     href="#projects"
-                    className="h-12 px-8 rounded-xl bg-neutral-950 text-white dark:bg-white dark:text-neutral-950 font-bold text-sm tracking-wide flex items-center justify-center gap-2.5 shadow-md hover:-translate-y-0.5 hover:shadow-xl transition-all duration-300"
+                    onClick={(e) => scrollToSection(e, "#projects")}
+                    className="h-11 px-7 rounded-xl bg-neutral-950 text-white dark:bg-white dark:text-neutral-950 font-bold text-sm tracking-wide flex items-center justify-center gap-2.5 shadow-md hover:-translate-y-0.5 hover:shadow-xl transition-all duration-300"
                   >
                     See my work
                     <ArrowRight className="w-4 h-4" />
@@ -636,7 +598,8 @@ export default function MyPortfolio({
 
                   <a
                     href="#problems"
-                    className="h-12 px-7 rounded-xl border-2 border-neutral-300 dark:border-neutral-700 hover:border-neutral-900 dark:hover:border-white text-neutral-900 dark:text-white font-bold text-sm tracking-wide flex items-center justify-center gap-2.5 bg-white/70 dark:bg-neutral-800/70 backdrop-blur-sm hover:-translate-y-0.5 transition-all duration-300"
+                    onClick={(e) => scrollToSection(e, "#problems")}
+                    className="h-11 px-6 rounded-xl border-2 border-neutral-300 dark:border-neutral-700 hover:border-neutral-900 dark:hover:border-white text-neutral-900 dark:text-white font-bold text-sm tracking-wide flex items-center justify-center gap-2.5 bg-white/70 dark:bg-neutral-800/70 backdrop-blur-sm hover:-translate-y-0.5 transition-all duration-300"
                   >
                     Problems Solved
                     <AlertTriangle className="w-4 h-4 text-amber-500" />
@@ -644,7 +607,8 @@ export default function MyPortfolio({
 
                   <a
                     href="#contact"
-                    className="h-12 px-6 rounded-xl border-2 border-neutral-300 dark:border-neutral-700 hover:border-neutral-900 dark:hover:border-white text-neutral-900 dark:text-white font-bold text-sm tracking-wide flex items-center justify-center gap-2.5 bg-white/70 dark:bg-neutral-800/70 backdrop-blur-sm hover:-translate-y-0.5 transition-all duration-300"
+                    onClick={(e) => scrollToSection(e, "#contact")}
+                    className="h-11 px-6 rounded-xl border-2 border-neutral-300 dark:border-neutral-700 hover:border-neutral-900 dark:hover:border-white text-neutral-900 dark:text-white font-bold text-sm tracking-wide flex items-center justify-center gap-2.5 bg-white/70 dark:bg-neutral-800/70 backdrop-blur-sm hover:-translate-y-0.5 transition-all duration-300"
                   >
                     Contact
                     <Mail className="w-4 h-4" />
@@ -707,6 +671,17 @@ export default function MyPortfolio({
                         )}
                       </div>
                     )}
+                  </div>
+
+                  {/* Thinking Orb floating status pill */}
+                  <div className="absolute -top-3 -right-3 sm:-top-4 sm:-right-4 z-20">
+                    <div className="p-2 sm:p-2.5 rounded-2xl bg-white/95 dark:bg-[#13151b]/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-700 shadow-xl flex items-center gap-2.5">
+                      <ThinkingOrb size={34} state="thinking" />
+                      <div className="pr-1 hidden sm:block text-left">
+                        <p className="text-[9px] font-mono font-bold uppercase tracking-wider text-neutral-400">Thinking Orb</p>
+                        <p className="text-[11px] font-bold text-neutral-900 dark:text-neutral-100">Live Reasoning</p>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Overlay badge: only real numbers */}
@@ -802,12 +777,21 @@ export default function MyPortfolio({
         </section>
 
         {/* ==========================================
-            2. ABOUT ME SECTION (Expanded & Full-Bleed)
+            2. ABOUT ME SECTION
             ========================================== */}
         <section id="about" className="w-full border-t border-neutral-200/90 dark:border-neutral-800 py-24 sm:py-32 relative overflow-hidden">
-          <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 xl:px-20 2xl:px-28 3xl:px-36 relative z-10">
-            <div className="text-center mb-14 sm:mb-20">
-              <h2 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-neutral-950 dark:text-white">
+          <motion.div
+            initial={{ opacity: 0, y: 35 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: "-60px" }}
+            transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+            className="max-w-6xl mx-auto px-4 md:px-8 relative z-10"
+          >
+            <div className="text-center mb-16">
+              <p className="text-xs tracking-widest text-neutral-400 font-semibold mb-2 uppercase">
+                BIOGRAPHY
+              </p>
+              <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-neutral-950 dark:text-white">
                 About {displayName.split(" ")[0]}
               </h2>
             </div>
@@ -876,7 +860,7 @@ export default function MyPortfolio({
                 )}
               </div>
             </div>
-          </div>
+          </motion.div>
         </section>
 
         {/* ==========================================
@@ -905,22 +889,6 @@ export default function MyPortfolio({
         {achievementWorks.length > 0 && <AchievementsSection achievementWorks={achievementWorks} />}
 
         {/* ==========================================
-            10. SAFE INTERACTIVE PROOF TERMINAL
-            ========================================== */}
-        <TerminalSection
-          displayName={displayName}
-          headline={profile?.headline ?? ""}
-          verified={verified}
-          worksCount={works.length}
-          proofsCount={totalProofs}
-          skills={skillStats}
-          workTitles={(projectWorks.length > 0 ? projectWorks : works).map((w) => w.title)}
-          problemTitles={problemWorks.map((w) => w.title)}
-          learningTitles={learningWorks.map((w) => w.title)}
-          contactEmail={contactEmailAddress}
-        />
-
-        {/* ==========================================
             11. CONTACT SECTION
             ========================================== */}
         {contactEmailAddress && <ContactSection
@@ -937,10 +905,10 @@ export default function MyPortfolio({
       </main>
 
       {/* ==========================================
-          FOOTER (Full Bleed)
+          FOOTER
           ========================================== */}
       <footer className="w-full border-t border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#0c0d12] py-12 px-4 sm:px-8 mt-20">
-        <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 xl:px-20 2xl:px-28 3xl:px-36 flex flex-col md:flex-row justify-between items-center gap-6">
+        <div className="max-w-6xl mx-auto px-4 md:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
           <div className="text-center md:text-left">
             <p className="text-sm font-bold text-neutral-950 dark:text-white">
               &copy; {new Date().getFullYear()} {displayName}. All verified records signed.
@@ -959,8 +927,6 @@ export default function MyPortfolio({
           </div>
         </div>
       </footer>
-
-      <PortfolioAssistant owner={displayName} answer={assistantReply} />
     </div>
   );
 }
@@ -1007,12 +973,18 @@ function ExperienceSection({
 
   return (
     <section id="experience" ref={containerRef} className="w-full border-t border-neutral-200/90 dark:border-neutral-800 py-24 sm:py-32 relative overflow-hidden">
-      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 xl:px-20 2xl:px-28 3xl:px-36 relative z-10">
-        <div className="text-center mb-14 sm:mb-20">
-          <span className="inline-block text-xs uppercase tracking-widest font-black text-blue-600 dark:text-brass mb-2">
-            ROLES
-          </span>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-neutral-950 dark:text-white">
+      <motion.div
+        initial={{ opacity: 0, y: 35 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: "-60px" }}
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        className="max-w-6xl mx-auto px-4 md:px-8 relative z-10"
+      >
+        <div className="text-center mb-16">
+          <p className="text-xs tracking-widest text-neutral-400 font-semibold mb-2 uppercase">
+            CAREER & ROLES
+          </p>
+          <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-neutral-950 dark:text-white">
             Experience
           </h2>
         </div>
@@ -1062,7 +1034,7 @@ function ExperienceSection({
             })}
           </div>
         </div>
-      </div>
+      </motion.div>
     </section>
   );
 }
@@ -1092,26 +1064,32 @@ function SelectedWorksSection({ works }: { works: Work[] }) {
 
   return (
     <section id="projects" className="w-full border-t border-neutral-200/90 dark:border-neutral-800 py-24 sm:py-32 relative overflow-hidden">
-      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 xl:px-20 2xl:px-28 3xl:px-36 relative z-10">
-        <div className="text-center mb-14 sm:mb-20">
-          <span className="inline-block text-xs uppercase tracking-widest font-black text-blue-600 dark:text-brass mb-2">
-            WORK
-          </span>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-neutral-950 dark:text-white">
-            Selected works
-          </h2>
-          <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400 max-w-2xl mx-auto font-medium">
-            Things this member did or made, with the proof they attached.
+      <motion.div
+        initial={{ opacity: 0, y: 35 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: "-60px" }}
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        className="max-w-6xl mx-auto px-4 md:px-8 relative z-10"
+      >
+        <div className="text-center mb-16">
+          <p className="text-xs tracking-widest text-neutral-400 font-semibold mb-2 uppercase">
+            VERIFIED WORK
           </p>
+          <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-neutral-950 dark:text-white">
+            Selected Works
+          </h2>
         </div>
 
-        {/* Adaptive fluid grid that expands smoothly on wide and zoomed-out screens */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 3xl:grid-cols-5 gap-6 sm:gap-8">
+        {/* Adaptive fluid grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
           {displayWorks.map((item, idx) => (
             <motion.div
               key={item.id}
+              initial={{ opacity: 0, y: 24 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: "-30px" }}
+              transition={{ duration: 0.55, delay: idx * 0.08, ease: [0.16, 1, 0.3, 1] }}
               whileHover={{ y: -6, scale: 1.015 }}
-              transition={{ duration: 0.25, ease: "easeOut" }}
               className="flex flex-col justify-between rounded-3xl border-2 border-neutral-200 dark:border-neutral-700/80 overflow-hidden bg-white dark:bg-[#13151b] shadow-md hover:shadow-2xl transition-all duration-300 group"
             >
               <div className="bg-neutral-950 p-6 flex flex-col justify-between min-h-[160px] relative">
@@ -1163,7 +1141,7 @@ function SelectedWorksSection({ works }: { works: Work[] }) {
             </motion.div>
           ))}
         </div>
-      </div>
+      </motion.div>
     </section>
   );
 }
@@ -1199,23 +1177,30 @@ function ProblemsSolvedSection({ problemWorks }: { problemWorks: Work[] }) {
 
   return (
     <section id="problems" className="w-full border-t border-neutral-200/90 dark:border-neutral-800 py-24 sm:py-32 relative overflow-hidden bg-neutral-50/50 dark:bg-[#0e1017]/40">
-      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 xl:px-20 2xl:px-28 3xl:px-36 relative z-10">
-        <div className="text-center mb-14 sm:mb-20">
-          <span className="inline-block text-xs uppercase tracking-widest font-black text-amber-600 dark:text-amber-400 mb-2">
-            PROBLEMS
-          </span>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-neutral-950 dark:text-white">
-            Problems solved
-          </h2>
-          <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400 max-w-2xl mx-auto font-medium">
-            Problems this member worked through, and what they found.
+      <motion.div
+        initial={{ opacity: 0, y: 35 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: "-60px" }}
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        className="max-w-6xl mx-auto px-4 md:px-8 relative z-10"
+      >
+        <div className="text-center mb-16">
+          <p className="text-xs tracking-widest text-neutral-400 font-semibold mb-2 uppercase">
+            ROOT CAUSE ANALYSIS
           </p>
+          <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-neutral-950 dark:text-white">
+            Problems Solved
+          </h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 gap-6 sm:gap-8">
-          {problems.map((prob) => (
-            <div
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
+          {problems.map((prob, idx) => (
+            <motion.div
               key={prob.id}
+              initial={{ opacity: 0, y: 24 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: "-30px" }}
+              transition={{ duration: 0.55, delay: idx * 0.08, ease: [0.16, 1, 0.3, 1] }}
               className="p-7 sm:p-8 rounded-3xl border-2 border-neutral-200 dark:border-neutral-700/80 bg-white dark:bg-[#13151b] shadow-lg flex flex-col justify-between hover:shadow-2xl hover:-translate-y-1.5 transition-all duration-300"
             >
               <div>
@@ -1246,10 +1231,10 @@ function ProblemsSolvedSection({ problemWorks }: { problemWorks: Work[] }) {
                   <ArrowRight className="w-3.5 h-3.5" />
                 </Link>
               </div>
-            </div>
+            </motion.div>
           ))}
         </div>
-      </div>
+      </motion.div>
     </section>
   );
 }
@@ -1276,23 +1261,30 @@ function ArticlesSection({ learningWorks }: { learningWorks: Work[] }) {
 
   return (
     <section id="articles" className="w-full border-t border-neutral-200/90 dark:border-neutral-800 py-24 sm:py-32 relative overflow-hidden">
-      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 xl:px-20 2xl:px-28 3xl:px-36 relative z-10">
-        <div className="text-center mb-14 sm:mb-20">
-          <span className="inline-block text-xs uppercase tracking-widest font-black text-purple-600 dark:text-purple-400 mb-2">
-            LEARNING
-          </span>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-neutral-950 dark:text-white">
-            Ideas and learning
-          </h2>
-          <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400 max-w-2xl mx-auto font-medium">
-            What this member learned, read or worked out.
+      <motion.div
+        initial={{ opacity: 0, y: 35 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: "-60px" }}
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        className="max-w-6xl mx-auto px-4 md:px-8 relative z-10"
+      >
+        <div className="text-center mb-16">
+          <p className="text-xs tracking-widest text-neutral-400 font-semibold mb-2 uppercase">
+            PUBLICATIONS & LEARNING
           </p>
+          <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-neutral-950 dark:text-white">
+            Articles & Ideas
+          </h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 gap-6 sm:gap-8">
-          {articles.map((art) => (
-            <div
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
+          {articles.map((art, idx) => (
+            <motion.div
               key={art.id}
+              initial={{ opacity: 0, y: 24 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: "-30px" }}
+              transition={{ duration: 0.55, delay: idx * 0.08, ease: [0.16, 1, 0.3, 1] }}
               className="p-7 sm:p-8 rounded-3xl border-2 border-neutral-200 dark:border-neutral-700/80 bg-white dark:bg-[#13151b] shadow-md hover:shadow-2xl hover:-translate-y-1.5 transition-all duration-300 flex flex-col justify-between group"
             >
               <div>
@@ -1321,10 +1313,10 @@ function ArticlesSection({ learningWorks }: { learningWorks: Work[] }) {
                   Read more
                 </Link>
               </div>
-            </div>
+            </motion.div>
           ))}
         </div>
-      </div>
+      </motion.div>
     </section>
   );
 }
@@ -1350,23 +1342,30 @@ function AchievementsSection({ achievementWorks }: { achievementWorks: Work[] })
 
   return (
     <section id="achievements" className="w-full border-t border-neutral-200/90 dark:border-neutral-800 py-24 sm:py-32 relative overflow-hidden">
-      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 xl:px-20 2xl:px-28 3xl:px-36 relative z-10">
-        <div className="text-center mb-14 sm:mb-20">
-          <span className="inline-block text-xs uppercase tracking-widest font-black text-emerald-600 dark:text-emerald-400 mb-2">
-            ACHIEVEMENTS
-          </span>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-neutral-950 dark:text-white">
+      <motion.div
+        initial={{ opacity: 0, y: 35 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: "-60px" }}
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        className="max-w-6xl mx-auto px-4 md:px-8 relative z-10"
+      >
+        <div className="text-center mb-16">
+          <p className="text-xs tracking-widest text-neutral-400 font-semibold mb-2 uppercase">
+            CREDENTIALS & HONORS
+          </p>
+          <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-neutral-950 dark:text-white">
             Achievements
           </h2>
-          <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400 max-w-2xl mx-auto font-medium">
-            Milestones, certificates and awards, with the proof attached.
-          </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 gap-6 sm:gap-8">
-          {achievements.map((item) => (
-            <div
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
+          {achievements.map((item, idx) => (
+            <motion.div
               key={item.id}
+              initial={{ opacity: 0, y: 24 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: "-30px" }}
+              transition={{ duration: 0.55, delay: idx * 0.08, ease: [0.16, 1, 0.3, 1] }}
               className="p-7 sm:p-8 rounded-3xl border-2 border-neutral-200 dark:border-neutral-700/80 bg-white dark:bg-[#13151b] shadow-md hover:shadow-2xl hover:-translate-y-1.5 transition-all duration-300 flex flex-col justify-between"
             >
               <div>
@@ -1392,244 +1391,14 @@ function AchievementsSection({ achievementWorks }: { achievementWorks: Work[] })
                   Verify Authenticity &rarr;
                 </Link>
               </div>
-            </div>
+            </motion.div>
           ))}
         </div>
-      </div>
+      </motion.div>
     </section>
   );
 }
 
-// ==========================================
-// 10. SAFE INTERACTIVE PROOF TERMINAL
-// ==========================================
-function TerminalSection({
-  displayName,
-  headline,
-  verified,
-  worksCount,
-  proofsCount,
-  skills,
-  workTitles,
-  problemTitles,
-  learningTitles,
-  contactEmail,
-}: {
-  displayName: string;
-  headline: string;
-  verified: boolean;
-  worksCount: number;
-  proofsCount: number;
-  skills: { name: string; works: number; proofs: number }[];
-  workTitles: string[];
-  problemTitles: string[];
-  learningTitles: string[];
-  contactEmail: string;
-}) {
-  // Every line comes from the member's own record; nothing here is invented.
-  const list = (items: string[], empty: string) => (items.length ? items.slice(0, 8).map((t) => `  - ${t}`) : [`  ${empty}`]);
-  const [terminalInput, setTerminalInput] = useState("");
-  const [history, setHistory] = useState<
-    { command: string; output: string[] }[]
-  >([
-    {
-      command: "proofolio --summary",
-      output: [
-        `Profile: ${displayName}`,
-        verified ? "Account: verified (activated with a delivered code)" : "Account: not verified yet",
-        `${worksCount} ${worksCount === 1 ? "work" : "works"}, ${proofsCount} ${proofsCount === 1 ? "proof" : "proofs"} attached`,
-        "Type 'help' to explore available commands.",
-      ],
-    },
-  ]);
-
-  const handleCommand = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cmd = terminalInput.trim().toLowerCase();
-    if (!cmd) return;
-
-    let output: string[] = [];
-
-    switch (cmd) {
-      case "help":
-        output = [
-          "Available commands:",
-          "  whoami      - Who this profile belongs to",
-          "  skills      - Skills linked to their work",
-          "  works       - Their works",
-          "  problems    - Problems they solved",
-          "  learning    - What they learned",
-          "  contact     - How to reach them",
-          "  clear       - Clear the terminal",
-        ];
-        break;
-      case "whoami":
-        output = [
-          `Name: ${displayName}`,
-          ...(headline ? [`Headline: ${headline}`] : []),
-          `Account: ${verified ? "verified" : "not verified yet"}`,
-          `Record: ${worksCount} works, ${proofsCount} proofs`,
-        ];
-        break;
-      case "skills":
-        output = ["Skills linked to work:", ...list(skills.map((k) => `${k.name} (${k.works} ${k.works === 1 ? "work" : "works"}, ${k.proofs} ${k.proofs === 1 ? "proof" : "proofs"})`), "No skills linked yet.")];
-        break;
-      case "works":
-        output = [`Works on record: ${worksCount}`, ...list(workTitles, "Nothing shared yet.")];
-        break;
-      case "problems":
-        output = ["Problems solved:", ...list(problemTitles, "None shared yet.")];
-        break;
-      case "learning":
-      case "articles":
-        output = ["Learning:", ...list(learningTitles, "None shared yet.")];
-        break;
-      case "contact":
-        output = [contactEmail ? `Email: ${contactEmail}` : "No public contact email. Follow them on Home Proofolio."];
-        break;
-      case "clear":
-        setHistory([]);
-        setTerminalInput("");
-        return;
-      default:
-        output = [`Command not found: '${cmd}'. Type 'help' for available commands.`];
-    }
-
-    setHistory((prev) => [...prev, { command: cmd, output }]);
-    setTerminalInput("");
-  };
-
-  return (
-    <section id="terminal" className="w-full border-t border-neutral-200/90 dark:border-neutral-800 py-24 sm:py-32 relative overflow-hidden bg-neutral-950 text-white">
-      {/* Ambient background glows */}
-      <div className="absolute top-1/4 -left-20 w-80 h-80 rounded-full bg-emerald-500/10 blur-3xl pointer-events-none animate-float-slow" />
-      <div className="absolute bottom-10 -right-20 w-80 h-80 rounded-full bg-blue-500/10 blur-3xl pointer-events-none animate-float-reverse" />
-
-      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 xl:px-20 2xl:px-28 3xl:px-36 relative z-10">
-        <div className="text-center mb-14 sm:mb-20">
-          <span className="inline-block text-xs uppercase tracking-widest font-black text-emerald-400 mb-2 font-mono">
-            TRY IT
-          </span>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-white">
-            Explore the record
-          </h2>
-          <p className="mt-3 text-sm text-neutral-400 max-w-2xl mx-auto font-medium">
-            Type a command to look through this member&apos;s work, skills and proof.
-          </p>
-        </div>
-
-        {/* Multi-Pane Terminal Layout for Ultra-Wide / Zoomed Displays */}
-        <div className="w-full max-w-6xl 2xl:max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-          {/* Main Terminal Window (Col 8) */}
-          <div className="lg:col-span-8 rounded-3xl border-2 border-neutral-800 bg-[#0d0f15] shadow-2xl overflow-hidden font-mono text-xs sm:text-sm flex flex-col justify-between">
-            {/* Terminal Window Header Bar */}
-            <div className="px-5 py-3.5 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-red-500/80 inline-block" />
-                <span className="w-3 h-3 rounded-full bg-yellow-500/80 inline-block" />
-                <span className="w-3 h-3 rounded-full bg-green-500/80 inline-block" />
-                <span className="ml-3 text-neutral-400 font-bold text-xs">
-                  proofolio@console:~ (safe mode)
-                </span>
-              </div>
-              <div className="flex items-center gap-2 text-[10px] text-neutral-500">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Read-Only Session</span>
-              </div>
-            </div>
-
-            {/* Quick command buttons */}
-            <div className="px-5 py-2.5 bg-neutral-900/60 border-b border-neutral-800/80 flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
-              <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-bold">Try:</span>
-              {["help", "whoami", "skills", "works", "problems", "articles", "contact", "clear"].map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setTerminalInput(c)}
-                  className="px-2.5 py-0.5 rounded-md bg-neutral-800 text-neutral-300 hover:bg-neutral-700 hover:text-white transition-colors text-xs cursor-pointer"
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-
-            {/* Terminal Output Body */}
-            <div className="p-5 sm:p-7 min-h-[300px] max-h-[460px] overflow-y-auto space-y-4 flex-1">
-              {history.map((h, i) => (
-                <div key={i} className="space-y-1.5">
-                  <div className="flex items-center gap-2 text-emerald-400">
-                    <span className="text-neutral-500">$</span>
-                    <span>{h.command}</span>
-                  </div>
-                  {h.output.map((line, lIdx) => (
-                    <div key={lIdx} className="text-neutral-300 pl-4 leading-relaxed font-mono">
-                      {line}
-                    </div>
-                  ))}
-                </div>
-              ))}
-
-              {/* Input Form */}
-              <form onSubmit={handleCommand} className="flex items-center gap-2 pt-2">
-                <span className="text-emerald-400">$</span>
-                <input
-                  type="text"
-                  value={terminalInput}
-                  onChange={(e) => setTerminalInput(e.target.value)}
-                  placeholder="type a command (e.g. 'help', 'skills', 'problems')..."
-                  className="flex-1 bg-transparent text-white outline-none font-mono text-xs sm:text-sm placeholder:text-neutral-600"
-                  autoFocus={false}
-                />
-              </form>
-            </div>
-          </div>
-
-          {/* Companion Telemetry Panel (Col 4) */}
-          <div className="lg:col-span-4 rounded-3xl border-2 border-neutral-800 bg-[#11131a] p-6 sm:p-7 flex flex-col justify-between space-y-6 shadow-xl font-mono">
-            <div>
-              <div className="flex items-center justify-between pb-3 border-b border-neutral-800">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                  CLI Telemetry
-                </span>
-              </div>
-
-              <div className="mt-4 space-y-3 text-xs">
-                <div className="flex justify-between py-1 border-b border-neutral-800/60">
-                  <span className="text-neutral-400">Identity:</span>
-                  <span className="text-white font-bold">{displayName}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-neutral-800/60">
-                  <span className="text-neutral-400">Proofs:</span>
-                  <span className="text-emerald-400 font-bold">{proofsCount}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-neutral-800/60">
-                  <span className="text-neutral-400">Total Projects:</span>
-                  <span className="text-blue-400 font-bold">{worksCount}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-neutral-800/60">
-                  <span className="text-neutral-400">Skills:</span>
-                  <span className="text-purple-400 font-bold">{skills.length}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-neutral-800/60">
-                  <span className="text-neutral-400">Account:</span>
-                  <span className="text-white font-bold">{verified ? "Verified" : "Not verified"}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-neutral-800 text-[11px] text-neutral-400 leading-relaxed">
-              <span className="text-white font-bold block mb-1">Commands Supported:</span>
-              <p className="font-mono text-neutral-300">
-                <code className="text-emerald-400">help</code>, <code className="text-emerald-400">whoami</code>, <code className="text-emerald-400">skills</code>, <code className="text-emerald-400">works</code>, <code className="text-emerald-400">problems</code>, <code className="text-emerald-400">articles</code>, <code className="text-emerald-400">contact</code>, <code className="text-emerald-400">clear</code>
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
 
 // ==========================================
 // 11. CONTACT SECTION COMPONENT
@@ -1657,14 +1426,20 @@ function ContactSection({
 }) {
   return (
     <section id="contact" className="w-full border-t border-neutral-200/90 dark:border-neutral-800 py-24 sm:py-32 relative overflow-hidden">
-      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 xl:px-20 2xl:px-28 3xl:px-36 relative z-10">
-        <div className="text-center mb-14 sm:mb-20">
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-neutral-950 dark:text-white">
-            Get in touch
-          </h2>
-          <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400 max-w-xl mx-auto font-medium">
-            Write a message below and it opens in your own email app, ready to send.
+      <motion.div
+        initial={{ opacity: 0, y: 35 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: "-60px" }}
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        className="max-w-6xl mx-auto px-4 md:px-8 relative z-10"
+      >
+        <div className="text-center mb-16">
+          <p className="text-xs tracking-widest text-neutral-400 font-semibold mb-2 uppercase">
+            DIRECT INQUIRIES
           </p>
+          <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-neutral-950 dark:text-white">
+            Get In Touch
+          </h2>
         </div>
 
         <div className="max-w-5xl 2xl:max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
@@ -1751,7 +1526,7 @@ function ContactSection({
             )}
           </div>
         </div>
-      </div>
+      </motion.div>
     </section>
   );
 }

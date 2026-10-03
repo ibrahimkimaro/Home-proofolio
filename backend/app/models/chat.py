@@ -29,4 +29,34 @@ class ChatMessage(Base):
     # DMs only: the other member, and when they read it (drives blue ticks and unread badges).
     recipient_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # One file per message: {"name": <uploads.name>, "filename", "content_type", "size"} (served by /chat/attachments).
+    attachment: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     inserted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ChatGroup(Base):
+    """A group chat. Its messages live in chat_messages under topic "room:<slug>"."""
+
+    __tablename__ = "chat_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    slug: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    topic: Mapped[str] = mapped_column(String(200), nullable=False, default="", server_default="")
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ChatGroupMember(Base):
+    """Invited members see an accept/decline notification; only status="member" can read or write the room."""
+
+    __tablename__ = "chat_group_members"
+    __table_args__ = (Index("ix_chat_group_members_user", "user_id", "status"),)
+
+    group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("chat_groups.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    role: Mapped[str] = mapped_column(String(10), nullable=False, default="member", server_default="member")  # admin | member
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="invited", server_default="invited")  # invited | member | declined
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -4,6 +4,7 @@ node_modules/
 *.tsbuildinfo
 .env.local
 .env*.local
+/.env
 home_profio_frontend/node_modules/
 home_profio_frontend/.next/
 home_profio_frontend/.env.local
@@ -27,7 +28,7 @@ realtime_chat/deps/
 erl_crash.dump
 
 # System / Core dumps
-core
+/core
 core.*
 *.log
 .DS_Store

@@ -41,8 +41,12 @@ async def my_notifications(
     unread = await db.scalar(
         select(func.count()).select_from(Notification).where(Notification.user_id == user.id, Notification.read_at.is_(None))
     )
+    # A read "X sent you messages" notification is stale (the chat itself shows the messages): hide it.
     rows = await db.execute(
-        select(Notification).where(Notification.user_id == user.id).order_by(Notification.created_at.desc()).limit(limit)
+        select(Notification)
+        .where(Notification.user_id == user.id, ~((Notification.kind == "message") & Notification.read_at.is_not(None)))
+        .order_by(Notification.created_at.desc())
+        .limit(limit)
     )
     return NotificationsOut(
         unread=unread or 0,

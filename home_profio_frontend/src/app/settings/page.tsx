@@ -34,6 +34,8 @@ import {
   signOutOtherDevices,
   updateAccount,
   saveAppearancePreference,
+  fetchPrivacyPreference,
+  savePrivacyPreference,
   updateProfile,
   type Account,
   type DeviceSession,
@@ -41,7 +43,7 @@ import {
   type User,
   type Visibility,
 } from "@/lib/api";
-import { AppShell, useSession } from "@/components/app/AppShell";
+import { AppShell, AppShellSkeleton, useSession } from "@/components/app/AppShell";
 import { ActivateButton, usePendingActivation } from "@/components/app/Activation";
 import {
   ACCENTS,
@@ -76,7 +78,7 @@ const primary = "flex h-10 items-center justify-center gap-2 rounded-lg bg-ink p
 
 export default function SettingsPage() {
   const [user, setUser] = useSession();
-  if (!user) return <div className="min-h-screen bg-paper-dim" />;
+  if (!user) return <AppShellSkeleton />;
   return (
     <AppShell user={user}>
       <Settings user={user} onProfile={(profile) => setUser({ ...user, profile })} />
@@ -86,9 +88,21 @@ export default function SettingsPage() {
 
 function Settings({ user, onProfile }: { user: User; onProfile: (p: Profile) => void }) {
   const [tab, setTab] = useState<Tab>(() => {
-    const h = window.location.hash.slice(1);
-    return TABS.some((t) => t.id === h) ? (h as Tab) : "account";
+    if (typeof window !== "undefined") {
+      const h = window.location.hash.slice(1);
+      return TABS.some((t) => t.id === h) ? (h as Tab) : "account";
+    }
+    return "account";
   });
+
+  useEffect(() => {
+    const sync = () => {
+      const h = window.location.hash.slice(1);
+      if (TABS.some((t) => t.id === h)) setTab(h as Tab);
+    };
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
 
   function go(t: Tab) {
     setTab(t);
@@ -246,6 +260,7 @@ function AccountSection({ user }: { user: User }) {
           </div>
         </form>
       </Section>
+
       <Section title="Profile and username" hint="Name, photo, headline, bio and your public link live on your profile.">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-[14px]">
@@ -741,7 +756,51 @@ function PrivacySection({ profile, onProfile }: { profile: Profile; onProfile: (
         </label>
         {error && <p className="mt-3 text-[13px] text-berry">{error}</p>}
       </Section>
+
+      <ChatPrivacy />
     </>
+  );
+}
+
+/** Whether people you chat with see your phone number in a chat's Contact info. Off unless turned on. */
+function ChatPrivacy() {
+  const [showPhone, setShowPhone] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    fetchPrivacyPreference()
+      .then((p) => setShowPhone(p.show_phone_in_chat))
+      .catch(() => setShowPhone(false));
+  }, []);
+  const toggle = async (on: boolean) => {
+    setError(null);
+    setShowPhone(on);
+    try {
+      await savePrivacyPreference({ show_phone_in_chat: on });
+    } catch (err) {
+      setShowPhone(!on);
+      setError(err instanceof Error ? err.message : "Could not save");
+    }
+  };
+  return (
+    <Section title="Chat">
+      <label className="flex cursor-pointer items-center justify-between gap-4">
+        <span>
+          <span className="block text-[14px] font-medium">Show my phone number in chat</span>
+          <span className="block text-[12px] text-slate">
+            People you message see it in the chat&apos;s Contact info. Off by default: it&apos;s the number you sign in with.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          checked={!!showPhone}
+          disabled={showPhone === null}
+          onChange={(e) => toggle(e.target.checked)}
+          className="peer sr-only"
+        />
+        <span className="relative h-6 w-11 shrink-0 rounded-full bg-hairline transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-paper after:shadow after:transition-transform peer-checked:bg-ink peer-checked:after:translate-x-5 peer-focus-visible:ring-2 peer-focus-visible:ring-ink/30" />
+      </label>
+      {error && <p className="mt-3 text-[13px] text-berry">{error}</p>}
+    </Section>
   );
 }
 
