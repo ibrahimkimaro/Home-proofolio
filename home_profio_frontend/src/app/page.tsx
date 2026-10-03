@@ -7,6 +7,7 @@ import { HowItWorks } from "@/components/landing/HowItWorks";
 import { JourneyShowcase } from "@/components/landing/JourneyShowcase";
 import { ProofSection } from "@/components/landing/ProofSection";
 import { WhoItsFor } from "@/components/landing/WhoItsFor";
+import { SupportAssistant } from "@/components/landing/SupportAssistant";
 
 export default function Home() {
   return (
@@ -22,6 +23,7 @@ export default function Home() {
         <CTASection />
       </main>
       <Footer />
+      <SupportAssistant />
     </>
   );
 }

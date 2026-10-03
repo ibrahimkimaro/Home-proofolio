@@ -23,11 +23,17 @@ class AdminUserOut(BaseModel):
     is_active: bool
     created_at: datetime
     works_count: int = 0
+    headline: str | None = None
+    role: str | None = None
+    roles: list[str] = []
 
 
 class AdminUserUpdate(BaseModel):
     is_active: bool | None = None
     is_admin: bool | None = None
+    fullname: str | None = None
+    headline: str | None = None
+    role_title: str | None = None
 
 
 class AdminWorkOut(BaseModel):

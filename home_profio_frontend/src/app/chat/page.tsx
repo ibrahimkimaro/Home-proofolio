@@ -1,12 +1,12 @@
 "use client";
 
 import { Suspense } from "react";
-import { AppShell, useSession } from "@/components/app/AppShell";
+import { AppShell, AppShellSkeleton, useSession } from "@/components/app/AppShell";
 import { RealtimeChatView } from "@/components/chat/RealtimeChatView";
 
 export default function ChatPage() {
   const [user] = useSession();
-  if (!user) return null;
+  if (!user) return <AppShellSkeleton />;
 
   return (
     <AppShell user={user}>

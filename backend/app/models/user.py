@@ -21,6 +21,8 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(default=False, nullable=False)
     # Signed up with a phone and hasn't entered the OTP yet; deleted if not verified in time.
     otp_pending: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
+    # Temporary unauthenticated visitor using guest support chat.
+    is_guest: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
     # Per-member preferences (Settings), e.g. {"appearance": {...}} — synced across devices.
     preferences: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -9,6 +9,8 @@ import {
   BookOpen,
   Briefcase,
   Compass,
+  FileText,
+  Headset,
   Home,
   LayoutGrid,
   LogOut,
@@ -30,25 +32,77 @@ import { AvatarImage } from "@/components/app/AvatarImage";
 import { AnnouncementBar } from "@/components/app/AnnouncementBar";
 import { ActivationBanner } from "@/components/app/Activation";
 import { NotificationBell } from "@/components/app/Notifications";
-import { adoptAccountAppearance, type Appearance } from "@/lib/appearance";
+import { adoptAccountAppearance, forgetAdoptedAppearance, type Appearance } from "@/lib/appearance";
 import { fetchCurrentUser, logoutUser, mediaUrl, type User } from "@/lib/api";
 import { UniversalWorkForm } from "@/components/app/UniversalWorkForm";
 import { ChatNotifier, unreadTotal, useChatInbox } from "@/components/chat/ChatNotifier";
+import { CallOverlay } from "@/components/chat/CallOverlay";
 
 export const CAPTURE_EVENT = "proofolio:capture";
+export { AppShellSkeleton } from "./AppShellSkeleton";
 
-/** Loads the signed-in user; sends visitors to /login. */
+const SESSION_CACHE_KEY = "proofolio-session-user";
+let memoryUser: User | null = null;
+
+export function getCachedSessionUser(): User | null {
+  if (memoryUser) return memoryUser;
+  if (typeof window !== "undefined") {
+    try {
+      const stored = sessionStorage.getItem(SESSION_CACHE_KEY);
+      if (stored) {
+        memoryUser = JSON.parse(stored);
+        return memoryUser;
+      }
+    } catch { }
+  }
+  return null;
+}
+
+export function setCachedSessionUser(u: User | null) {
+  memoryUser = u;
+  if (typeof window !== "undefined") {
+    try {
+      if (u) {
+        sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(u));
+      } else {
+        sessionStorage.removeItem(SESSION_CACHE_KEY);
+      }
+    } catch { }
+  }
+}
+
+/** Loads the signed-in user with instant synchronous cache; sends visitors to /login. */
 export function useSession() {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUserState] = useState<User | null>(getCachedSessionUser);
+
   useEffect(() => {
+    let active = true;
     fetchCurrentUser()
       .then((u) => {
+        if (!active) return;
+        setCachedSessionUser(u);
         adoptAccountAppearance(u.preferences?.appearance as Partial<Appearance> | undefined);
-        setUser(u);
+        setUserState(u);
       })
-      .catch(() => router.replace("/login"));
+      .catch(() => {
+        if (!active) return;
+        setCachedSessionUser(null);
+        router.replace("/login");
+      });
+    return () => {
+      active = false;
+    };
   }, [router]);
+
+  const setUser = (value: User | null | ((prev: User | null) => User | null)) => {
+    setUserState((prev) => {
+      const updated = typeof value === "function" ? value(prev) : value;
+      setCachedSessionUser(updated);
+      return updated;
+    });
+  };
+
   return [user, setUser] as const;
 }
 
@@ -64,7 +118,6 @@ const PLACES: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/home", label: "Home", icon: Home },
   { href: "/chat", label: "Messages", icon: MessageSquare },
   { href: "/discover", label: "Discover", icon: Compass },
-  { href: "/profile", label: "Profile", icon: UserRound },
 ];
 
 export interface CommunityItem {
@@ -126,6 +179,13 @@ const COMMUNITY_ITEMS: CommunityItem[] = [
     color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
   },
   {
+    href: "/cv",
+    label: "Curriculum Vitae",
+    sub: "Signed CV to share",
+    icon: FileText,
+    color: "bg-slate-500/10 text-slate-700 dark:text-slate-300 border-slate-500/20",
+  },
+  {
     href: "/profile#roles",
     label: "Roles & Orgs",
     sub: "Teams & companies",
@@ -159,6 +219,7 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
     "/discussions",
     "/articles",
     "/portfolio",
+    "/cv",
     "/discover",
   ].some((path) => pathname === path || pathname.startsWith(`${path}/`));
 
@@ -186,7 +247,9 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
   }
 
   async function signOut() {
-    await logoutUser().catch(() => {});
+    setCachedSessionUser(null);
+    await logoutUser().catch(() => { });
+    forgetAdoptedAppearance();
     router.replace("/login");
   }
 
@@ -212,10 +275,12 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
           </SideGroup>
           <SideGroup title="Public face">
             <SideLink href="/portfolio" label="Portfolio" icon={PanelsTopLeft} active={isActive("/portfolio")} />
-            <SideLink href="/profile#roles" label="Roles & organizations" icon={Users} active={false} />
+            <SideLink href="/cv" label="Curriculum Vitae (CV)" icon={FileText} active={isActive("/cv")} />
           </SideGroup>
           <SideGroup title="Account">
+            <SideLink href="/profile" label="Profile" icon={UserRound} active={isActive("/profile")} />
             <SideLink href="/settings" label="Settings" icon={Settings} active={isActive("/settings")} />
+            <SideLink href="/support" label="Help & Support" icon={Headset} active={isActive("/support")} />
           </SideGroup>
         </nav>
       </aside>
@@ -270,6 +335,7 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
       </div>
 
       <ChatNotifier userId={user.id} />
+      <CallOverlay userId={user.id} />
 
       {/* Mobile bottom bar: Home, Messages, Add, Community Hub, Profile */}
       <nav
@@ -303,15 +369,13 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
               onClick={() => setCommunityHubOpen((open) => !open)}
               aria-label="Community Hub"
               aria-expanded={communityHubOpen}
-              className={`flex flex-col items-center gap-1 text-[11px] w-full transition-all cursor-pointer ${
-                isCommunityActive || communityHubOpen ? "font-semibold text-ink-800" : "text-slate hover:text-ink-800"
-              }`}
+              className={`flex flex-col items-center gap-1 text-[11px] w-full transition-all cursor-pointer ${isCommunityActive || communityHubOpen ? "font-semibold text-ink-800" : "text-slate hover:text-ink-800"
+                }`}
             >
               <span className="relative">
                 <LayoutGrid
-                  className={`h-[22px] w-[22px] transition-all duration-200 ${
-                    communityHubOpen ? "scale-115 text-ink rotate-45" : ""
-                  }`}
+                  className={`h-[22px] w-[22px] transition-all duration-200 ${communityHubOpen ? "scale-115 text-ink rotate-45" : ""
+                    }`}
                   strokeWidth={isCommunityActive || communityHubOpen ? 2.2 : 1.8}
                 />
                 {isCommunityActive && (
@@ -371,30 +435,26 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
                     key={item.href}
                     href={item.href}
                     onClick={() => setCommunityHubOpen(false)}
-                    className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border transition-all active:scale-95 text-center group cursor-pointer ${
-                      active
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border transition-all active:scale-95 text-center group cursor-pointer ${active
                         ? "bg-ink text-paper border-ink shadow-sm"
                         : "bg-paper-dim/40 hover:bg-paper-dim border-hairline/50 hover:border-hairline"
-                    }`}
+                      }`}
                   >
                     <div
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center border transition-transform group-hover:scale-110 ${
-                        active ? "bg-paper/20 text-paper border-transparent" : item.color
-                      }`}
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center border transition-transform group-hover:scale-110 ${active ? "bg-paper/20 text-paper border-transparent" : item.color
+                        }`}
                     >
                       <Icon className="w-4.5 h-4.5" />
                     </div>
                     <span
-                      className={`mt-1.5 text-[11px] font-semibold tracking-tight leading-tight line-clamp-1 ${
-                        active ? "text-paper" : "text-ink-900"
-                      }`}
+                      className={`mt-1.5 text-[11px] font-semibold tracking-tight leading-tight line-clamp-1 ${active ? "text-paper" : "text-ink-900"
+                        }`}
                     >
                       {item.label}
                     </span>
                     <span
-                      className={`text-[9px] line-clamp-1 leading-none mt-0.5 ${
-                        active ? "text-paper/80" : "text-slate"
-                      }`}
+                      className={`text-[9px] line-clamp-1 leading-none mt-0.5 ${active ? "text-paper/80" : "text-slate"
+                        }`}
                     >
                       {item.sub}
                     </span>
@@ -468,9 +528,8 @@ function SideLink({
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
-      className={`flex items-center gap-3 rounded-lg px-3 py-2 text-[14px] transition-colors ${
-        active ? "bg-ink font-semibold text-paper" : "text-slate hover:bg-paper-dim hover:text-ink-800"
-      }`}
+      className={`flex items-center gap-3 rounded-lg px-3 py-2 text-[14px] transition-colors ${active ? "bg-ink font-semibold text-paper" : "text-slate hover:bg-paper-dim hover:text-ink-800"
+        }`}
     >
       <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={1.8} />
       {label}
@@ -568,8 +627,14 @@ function AccountMenu({ user, onSignOut }: { user: User; onSignOut: () => void })
             <span className="text-slate">Theme</span>
             <ThemeToggle />
           </div>
+          <Link href="/profile" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">
+            <UserRound className="h-4 w-4" /> Profile
+          </Link>
           <Link href="/settings" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">
             <Settings className="h-4 w-4" /> Settings
+          </Link>
+          <Link href="/support" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">
+            <Headset className="h-4 w-4 text-emerald-600" /> Help & Support
           </Link>
           {user.is_admin && (
             <Link href="/admin" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { CircleDashed, FileQuestion, Send, Share2, type LucideIcon } from "lucide-react";
 import { fetchHome, type HomeData, type User, type Work } from "@/lib/api";
 import { firstName, greeting } from "@/lib/items";
-import { AppShell, Avatar, CAPTURE_EVENT, displayName, useSession } from "@/components/app/AppShell";
+import { AppShell, AppShellSkeleton, Avatar, CAPTURE_EVENT, displayName, useSession } from "@/components/app/AppShell";
 import { CaptureBar, type CaptureHandle } from "@/components/app/CaptureBar";
 import { ItemRow, PublishReview, ShapeSheet } from "@/components/app/Items";
 import { PortfolioPreview } from "@/components/app/PortfolioPreview";
@@ -15,7 +15,7 @@ const LIST_MAX = 4;
 
 export default function HomePage() {
   const [user] = useSession();
-  if (!user) return <div className="min-h-screen bg-paper-dim" />;
+  if (!user) return <AppShellSkeleton />;
   return (
     <AppShell user={user}>
       <Home user={user} />

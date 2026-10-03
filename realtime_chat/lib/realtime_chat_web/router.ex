@@ -10,5 +10,6 @@ defmodule RealtimeChatWeb.Router do
 
     get "/health", HealthController, :index
     get "/api/status", HealthController, :status
+    post "/internal/events", InternalController, :events
   end
 end

@@ -18,7 +18,7 @@ import {
   logoutUser,
 } from "@/lib/api";
 import { AdminLoginGate } from "@/components/admin/AdminLoginGate";
-import { adoptAccountAppearance, type Appearance } from "@/lib/appearance";
+import { adoptAccountAppearance, forgetAdoptedAppearance, type Appearance } from "@/lib/appearance";
 import { AdminShell, NAV, type AdminSection } from "@/components/admin/AdminShell";
 import { OverviewSection } from "@/components/admin/OverviewSection";
 import { UsersSection } from "@/components/admin/UsersSection";
@@ -29,6 +29,7 @@ import { OnboardingSection } from "@/components/admin/OnboardingSection";
 import { AuditSection, BusinessesSection, PlatformSection, TemplatesSection } from "@/components/admin/ManageSections";
 import { SupportSection } from "@/components/admin/SupportSection";
 import { ChatNotifier, unreadTotal, useChatInbox } from "@/components/chat/ChatNotifier";
+import { CallOverlay } from "@/components/chat/CallOverlay";
 import { ChatSection } from "@/components/admin/ChatSection";
 import { DevicesSection, HealthSection, MessagesSection, ThreatsSection } from "@/components/admin/MonitorSections";
 
@@ -58,6 +59,7 @@ export default function AdminPage() {
 
   async function handleAdminLogout() {
     await logoutUser().catch(() => {});
+    forgetAdoptedAppearance();
     setAdminUser(null);
     setAuthStatus("login");
   }
@@ -181,6 +183,7 @@ function AdminDashboard({ admin, onLogout }: { admin: User; onLogout: () => void
       {section === "support" && <SupportSection admin={admin} onError={setError} />}
       {section === "chat" && <ChatSection admin={admin} onError={setError} />}
       <ChatNotifier userId={admin.id} />
+      <CallOverlay userId={admin.id} />
     </AdminShell>
   );
 }

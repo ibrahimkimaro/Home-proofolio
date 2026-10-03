@@ -3,19 +3,19 @@ defmodule RealtimeChat.Messages do
   require Logger
 
   @db RealtimeChat.DB
-  @cols "client_id, id, topic, author_id::text, author_name, author_username, body, reply_to, inserted_at, recipient_id::text, read_at"
+  @cols "client_id, id, topic, author_id::text, author_name, author_username, body, reply_to, inserted_at, recipient_id::text, read_at, attachment"
   @max_seq 9_223_372_036_854_775_807
 
   # (author_id, client_id) is unique, so a client resending after a lost ack gets the same row back.
   @insert """
-  INSERT INTO chat_messages (client_id, topic, author_id, author_name, author_username, body, reply_to, recipient_id)
-  VALUES ($1, $2, $3::text::uuid, $4, $5, $6, $7, $8::text::uuid)
+  INSERT INTO chat_messages (client_id, topic, author_id, author_name, author_username, body, reply_to, recipient_id, attachment)
+  VALUES ($1, $2, $3::text::uuid, $4, $5, $6, $7, $8::text::uuid, $9)
   ON CONFLICT (author_id, client_id) DO UPDATE SET client_id = EXCLUDED.client_id
   RETURNING #{@cols}
   """
 
-  def insert(topic, author, client_id, text, reply_to, recipient_id) do
-    params = [client_id, topic, author.user_id, author.name, author.username, text, reply_to, recipient_id]
+  def insert(topic, author, client_id, text, reply_to, recipient_id, attachment \\ nil) do
+    params = [client_id, topic, author.user_id, author.name, author.username, text, reply_to, recipient_id, attachment]
 
     case Postgrex.query(@db, @insert, params) do
       {:ok, %{rows: [row]}} ->
@@ -29,6 +29,41 @@ defmodule RealtimeChat.Messages do
         {:error, "not saved, retry"}
     end
   end
+
+  @doc "True when this user has accepted the invitation to (or created) the group behind room `slug`."
+  def group_member?(slug, user_id) do
+    case Postgrex.query(
+           @db,
+           "SELECT 1 FROM chat_group_members m JOIN chat_groups g ON g.id = m.group_id WHERE g.slug = $1 AND m.user_id = $2::text::uuid AND m.status = 'member'",
+           [slug, user_id]
+         ) do
+      {:ok, %{num_rows: n}} ->
+        n > 0
+
+      {:error, err} ->
+        Logger.error("group check failed: #{Exception.message(err)}")
+        false
+    end
+  end
+
+  @doc """
+  The attachment a sender may put on a message: only a file they uploaded themselves (POST
+  /chat/attachments), so nobody can share someone else's private upload by guessing its name.
+  The type comes from the upload record, not the client.
+  """
+  def attachment(%{"name" => name} = a, owner_id) when is_binary(name) and byte_size(name) <= 64 do
+    case Postgrex.query(@db, "SELECT content_type FROM uploads WHERE name = $1 AND owner_id = $2::text::uuid", [name, owner_id]) do
+      {:ok, %{rows: [[type]]}} ->
+        filename = if is_binary(a["filename"]), do: String.slice(a["filename"], 0, 200), else: name
+        size = if is_integer(a["size"]) and a["size"] >= 0, do: a["size"], else: nil
+        {:ok, %{"name" => name, "filename" => filename, "content_type" => type, "size" => size}}
+
+      _ ->
+        {:error, "attachment not found"}
+    end
+  end
+
+  def attachment(_, _), do: {:error, "invalid attachment"}
 
   @doc "Up to `limit` messages with after < seq < before, oldest first, and whether older ones exist."
   def page(topic, limit, opts \\ []) do
@@ -81,16 +116,26 @@ defmodule RealtimeChat.Messages do
   """
 
   def notify(recipient_id, from_name, topic, text) do
-    Postgrex.query(@db, @notify, [recipient_id, chat_link(topic), topic, from_name, String.slice(text, 0, 140)])
+    result = Postgrex.query(@db, @notify, [recipient_id, chat_link(topic), topic, from_name, String.slice(text, 0, 140)])
+    bell_changed(recipient_id)
+    result
   end
 
+  # Once the chat is read, "X sent you N messages" has nothing left to say: remove it (not just
+  # mark it read), and refresh the bell in the member's open tabs right away.
   def clear_notification(user_id, topic) do
-    Postgrex.query(
-      @db,
-      "UPDATE notifications SET read_at = now() WHERE user_id = $1::text::uuid AND kind = 'message' AND link = $2 AND read_at IS NULL",
-      [user_id, chat_link(topic)]
-    )
+    result =
+      Postgrex.query(
+        @db,
+        "DELETE FROM notifications WHERE user_id = $1::text::uuid AND kind = 'message' AND link = $2",
+        [user_id, chat_link(topic)]
+      )
+
+    bell_changed(user_id)
+    result
   end
+
+  defp bell_changed(user_id), do: RealtimeChatWeb.Endpoint.broadcast("user:" <> user_id, "notifications_changed", %{})
 
   defp chat_link(topic), do: "/chat?c=" <> URI.encode_www_form(topic)
 
@@ -144,7 +189,7 @@ defmodule RealtimeChat.Messages do
     end
   end
 
-  defp to_map([client_id, seq, topic, author_id, name, username, body, reply_to, at, recipient_id, read_at]) do
+  defp to_map([client_id, seq, topic, author_id, name, username, body, reply_to, at, recipient_id, read_at, attachment]) do
     %{
       id: Integer.to_string(seq),
       seq: seq,
@@ -156,6 +201,7 @@ defmodule RealtimeChat.Messages do
       recipient_id: recipient_id,
       text: body,
       reply_to: reply_to,
+      attachment: attachment,
       timestamp: DateTime.to_iso8601(at),
       read_at: read_at && DateTime.to_iso8601(read_at)
     }

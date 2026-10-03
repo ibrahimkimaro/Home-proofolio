@@ -146,6 +146,9 @@ export interface AdminUser {
   is_active: boolean;
   created_at: string;
   works_count: number;
+  headline?: string | null;
+  role?: string | null;
+  roles?: string[];
 }
 
 export interface AdminOtpLog {
@@ -173,7 +176,16 @@ export function fetchAdminOtps(limit = 50) {
   return request<AdminOtpLog[]>(`/admin/otps?limit=${limit}`);
 }
 
-export function updateAdminUser(id: string, payload: { is_active?: boolean; is_admin?: boolean }) {
+export function updateAdminUser(
+  id: string,
+  payload: {
+    is_active?: boolean;
+    is_admin?: boolean;
+    fullname?: string;
+    headline?: string;
+    role_title?: string;
+  }
+) {
   return request<AdminUser>(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
 }
 
@@ -623,6 +635,15 @@ export const deleteAccount = (password: string, confirm: string) =>
 export const saveAppearancePreference = (appearance: object) =>
   request<{ appearance?: object }>("/me/preferences", { method: "PUT", body: JSON.stringify({ appearance }) });
 
+// Settings > Privacy. show_phone_in_chat: people you chat with see your phone in Contact info (off by default).
+export interface PrivacyPrefs {
+  show_phone_in_chat: boolean;
+}
+export const fetchPrivacyPreference = () =>
+  request<{ privacy?: PrivacyPrefs | null }>("/me/preferences").then((p) => p.privacy ?? { show_phone_in_chat: false });
+export const savePrivacyPreference = (privacy: PrivacyPrefs) =>
+  request<{ privacy?: PrivacyPrefs }>("/me/preferences", { method: "PUT", body: JSON.stringify({ privacy }) });
+
 // ---------- onboarding (public) ----------
 
 export type OnboardingStepKey = "discipline" | "work" | "evidence" | "questions" | "appearance" | "account";
@@ -932,15 +953,198 @@ export interface ChatContactItem {
   type: "direct";
   pairId: string;
   isOnline: boolean;
+  lastMessage?: string;
+  lastMessageTime?: string;
+  unreadCount?: number;
 }
 
-export const fetchChatContacts = () => request<ChatContactItem[]>("/chat/contacts");
+export const fetchChatContacts = (search?: string) =>
+  request<ChatContactItem[]>(search ? `/chat/contacts?search=${encodeURIComponent(search)}` : "/chat/contacts");
+
+export const searchChatMembers = (query: string = "") =>
+  request<ChatContactItem[]>(`/chat/search-members?q=${encodeURIComponent(query)}`);
+
+// Group chats: the creator is admin; invited members accept or decline from their notifications.
+export interface ChatGroupItem {
+  id: string;
+  name: string;
+  username: string;
+  role: string;
+  avatar: string | null;
+  type: "group";
+  roomId: string;
+  myRole: "admin" | "member";
+  membersCount: number;
+  isOnline: boolean;
+  lastMessage: string | null;
+  lastMessageTime: string | null;
+  invited?: number;
+}
+export interface GroupMember {
+  user_id: string;
+  name: string;
+  username: string;
+  role: "admin" | "member";
+  status: "member" | "invited";
+  is_me: boolean;
+  avatar?: string | null;
+}
+export interface GroupDetail {
+  id: string;
+  name: string;
+  topic: string;
+  slug: string;
+  my_role: "admin" | "member";
+  my_status: "member" | "invited";
+  members: GroupMember[];
+}
+
+export const fetchChatGroups = () => request<ChatGroupItem[]>("/chat/groups");
+export const createChatGroup = (name: string, topic: string, memberIds: string[]) =>
+  request<ChatGroupItem>("/chat/groups", { method: "POST", body: JSON.stringify({ name, topic, member_ids: memberIds }) });
+export const fetchGroupDetail = (id: string) => request<GroupDetail>(`/chat/groups/${id}`);
+export const acceptGroupInvite = (id: string) =>
+  request<{ slug: string; topic: string; group: ChatGroupItem }>(`/chat/groups/${id}/accept`, { method: "POST" });
+export const declineGroupInvite = (id: string) => request<void>(`/chat/groups/${id}/decline`, { method: "POST" });
+export const addGroupMembers = (id: string, userIds: string[]) =>
+  request<{ invited: number }>(`/chat/groups/${id}/members`, { method: "POST", body: JSON.stringify({ user_ids: userIds }) });
+export const removeGroupMember = (id: string, userId: string) =>
+  request<void>(`/chat/groups/${id}/members/${userId}`, { method: "DELETE" });
+export const setGroupMemberRole = (id: string, userId: string, role: "admin" | "member") =>
+  request<void>(`/chat/groups/${id}/members/${userId}/role`, { method: "POST", body: JSON.stringify({ role }) });
+
+// Chat attachments: upload first (owned by the sender), then send a message naming it. Downloads
+// are allowed to the people of the chats it was sent in (backend app/api/chat_files.py).
+export interface ChatAttachment {
+  name: string;
+  filename: string;
+  content_type: string;
+  size: number | null;
+}
+
+/** Upload with progress (0..1). XHR rather than fetch: fetch can't report upload progress. */
+export function uploadChatAttachment(file: File, onProgress?: (fraction: number) => void): Promise<ChatAttachment> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}/chat/attachments`);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
+    xhr.onload = () => {
+      let body: { detail?: unknown } & Partial<ChatAttachment> = {};
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {}
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as ChatAttachment);
+      else reject(new ApiError(xhr.status, typeof body.detail === "string" ? body.detail : "Upload failed"));
+    };
+    xhr.onerror = () => reject(new ApiError(0, "Upload failed: check your connection"));
+    const form = new FormData();
+    form.append("file", file);
+    xhr.send(form);
+  });
+}
+
+export const chatAttachmentUrl = (name: string, download = false) =>
+  `${API_URL}/chat/attachments/${encodeURIComponent(name)}${download ? "?download=1" : ""}`;
+
+export interface SharedFile extends ChatAttachment {
+  message_id: string;
+  mine: boolean;
+  author_name: string;
+  sent_at: string;
+}
+
+/** The details panel of a 1:1 chat. `phone` is set only when they chose to show it in chat. */
+export interface ContactInfo {
+  id: string;
+  name: string;
+  username: string;
+  avatar: string | null;
+  headline: string | null;
+  bio: string | null;
+  phone: string | null;
+  joined_at: string | null;
+  topic: string;
+  files: SharedFile[];
+}
+export const fetchContactInfo = (userId: string) => request<ContactInfo>(`/chat/contacts/${userId}/info`);
 
 // Signed identity for the realtime chat socket (expires in 1h; src/lib/realtime.ts refreshes it).
 export const fetchChatToken = () => request<{ token: string }>("/chat/token");
 
-// Live support: a member's DM with the support admin, and the admin's inbox of such threads.
+// Live support: a member or guest's DM with the support admin, and the admin's inbox of such threads.
 export interface SupportAgent { id: string; name: string; topic: string }
-export interface SupportThread { topic: string; user_id: string; name: string; username: string; last: string; last_at: string; unread: number; from_member: boolean }
+export interface SupportThread {
+  topic: string;
+  user_id: string;
+  name: string;
+  username: string;
+  last: string;
+  last_at: string;
+  unread: number;
+  from_member: boolean;
+  is_guest?: boolean;
+}
 export const fetchSupportAgent = () => request<SupportAgent>("/support/agent");
 export const fetchSupportThreads = () => request<SupportThread[]>("/admin/support");
+
+export interface GuestSupportResponse {
+  guest_id: string;
+  session_id: string;
+  name: string;
+  username: string;
+  token: string;
+  agent: SupportAgent;
+}
+
+export const initGuestSupport = (sessionId: string, displayName?: string) =>
+  request<GuestSupportResponse>("/support/guest/init", {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId, display_name: displayName }),
+  });
+
+// ---------- Curriculum Vitae (backend app/api/cv.py) ----------
+// profile/roles/skills are live from Proofolio; `data` is what only the CV has. Valid once signed.
+
+export interface CvLink { label: string; url: string }
+export interface CvReferee { id: string; name: string; title: string; organization: string; phone: string; email: string }
+export interface CvEntry { id: string; title: string; organization: string; place: string; start: string; end: string; points: string[] }
+export interface CvLevel { name: string; level: number }
+export interface CvData {
+  name: string;
+  title: string;
+  about: string;
+  address: string;
+  show_phone: boolean;
+  show_email: boolean;
+  links: CvLink[];
+  referees: CvReferee[];
+  education: CvEntry[];
+  jobs: CvEntry[];
+  role_points: Record<string, string[]>;
+  hidden_roles: string[];
+  skills: CvLevel[];
+  hidden_skills: string[];
+  languages: CvLevel[];
+  hobbies: string[];
+}
+export interface CvRole { id: string; title: string; organization: string; start: string | null; end: string | null }
+export interface Cv {
+  profile: { name: string; title: string; about: string; photo: string | null; email: string; phone: string; username: string };
+  roles: CvRole[];
+  skills: (CvLevel & { count: number })[];
+  data: CvData;
+  signature: string | null;
+  signed_at: string | null;
+  updated_at: string | null;
+  share_token?: string | null;
+}
+
+export const fetchMyCv = () => request<Cv>("/me/cv");
+export const saveMyCv = (data: CvData) => request<Cv>("/me/cv", { method: "PUT", body: JSON.stringify(data) });
+export const signMyCv = (dataUrl: string) =>
+  request<{ signed_at: string }>("/me/cv/signature", { method: "PUT", body: JSON.stringify({ data_url: dataUrl }) });
+export const removeCvSignature = () => request<void>("/me/cv/signature", { method: "DELETE" });
+export const shareMyCv = () => request<{ share_token: string }>("/me/cv/share", { method: "POST" });
+export const stopSharingCv = () => request<void>("/me/cv/share", { method: "DELETE" });
+export const fetchSharedCv = (token: string) => request<Cv>(`/cv/shared/${encodeURIComponent(token)}`);

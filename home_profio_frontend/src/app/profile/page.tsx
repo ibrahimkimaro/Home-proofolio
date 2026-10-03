@@ -15,12 +15,12 @@ import {
   type Work,
 } from "@/lib/api";
 import { KINDS, isPublic, kindOf } from "@/lib/items";
-import { AppShell, Avatar, useSession } from "@/components/app/AppShell";
+import { AppShell, AppShellSkeleton, Avatar, useSession } from "@/components/app/AppShell";
 import { BusinessesPanel, RolesPanel } from "@/components/app/RolesPanel";
 
 export default function ProfilePage() {
   const [user, setUser] = useSession();
-  if (!user) return <div className="min-h-screen bg-paper-dim" />;
+  if (!user) return <AppShellSkeleton />;
   return (
     <AppShell user={user}>
       <ProfileEditor user={user} onProfile={(profile) => setUser({ ...user, profile })} />

@@ -15,8 +15,19 @@ If running via Docker Compose (`docker compose up -d`):
    ```
 
 2. **Wait a few seconds for Postgres to become healthy, then restore the backup:**
+
+   **Windows (PowerShell / Command Prompt):**
+   ```cmd
+   cmd.exe /c "docker exec -i home-proofolio-db-1 psql -U ibrahim_kimaro -d home_proofolio_db < database_backup.sql"
+   ```
+   *Or in PowerShell:*
+   ```powershell
+   Get-Content -Raw database_backup.sql | docker exec -i home-proofolio-db-1 psql -U ibrahim_kimaro -d home_proofolio_db
+   ```
+
+   **Linux / macOS (Bash):**
    ```bash
-   docker exec -i home_proofolio-db-1 psql -U ibrahim_kimaro -d home_proofolio_db < database_backup.sql
+   docker exec -i home-proofolio-db-1 psql -U ibrahim_kimaro -d home_proofolio_db < database_backup.sql
    ```
 
 3. **Start the rest of the stack:**
@@ -45,5 +56,5 @@ If you have PostgreSQL installed directly on your machine:
 ## Verifying the Restore
 Check that the tables and users are present:
 ```bash
-docker exec -it home_proofolio-db-1 psql -U ibrahim_kimaro -d home_proofolio_db -c "SELECT email, username, fullname FROM users;"
+docker exec -it home-proofolio-db-1 psql -U ibrahim_kimaro -d home_proofolio_db -c "SELECT email, username, fullname FROM users;"
 ```

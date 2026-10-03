@@ -24,5 +24,11 @@ class AppearancePrefs(BaseModel):
         return v.lower()
 
 
+class PrivacyPrefs(BaseModel):
+    # Off by default: the phone number is the private one used for sign-in codes.
+    show_phone_in_chat: bool = False
+
+
 class Preferences(BaseModel):
     appearance: AppearancePrefs | None = None
+    privacy: PrivacyPrefs | None = None

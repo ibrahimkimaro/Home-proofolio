@@ -3,14 +3,18 @@
 import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BadgeCheck, Bell, Building2, Megaphone, MessageCircle, ShieldAlert, UserPlus, type LucideIcon } from "lucide-react";
+import { BadgeCheck, Bell, Building2, Megaphone, MessageCircle, PhoneMissed, ShieldAlert, UserPlus, Users, type LucideIcon } from "lucide-react";
 import {
+  acceptGroupInvite,
+  declineGroupInvite,
   fetchNotifications,
   markNotificationsRead,
   signOutOtherDevices,
   type AppNotification,
 } from "@/lib/api";
+import { NOTIFICATIONS_CHANGED } from "@/components/chat/ChatNotifier";
 
+// A fallback: live events (invites, joins) reload the bell at once via NOTIFICATIONS_CHANGED.
 const POLL_MS = 60_000;
 
 const ICONS: Record<string, { icon: LucideIcon; cls: string }> = {
@@ -20,6 +24,9 @@ const ICONS: Record<string, { icon: LucideIcon; cls: string }> = {
   signin: { icon: ShieldAlert, cls: "bg-berry/12 text-berry" },
   broadcast: { icon: Megaphone, cls: "bg-ink/8 text-ink-700" },
   message: { icon: MessageCircle, cls: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400" },
+  call: { icon: PhoneMissed, cls: "bg-berry/12 text-berry" },
+  group_invite: { icon: Users, cls: "bg-purple-500/12 text-purple-600 dark:text-purple-400" },
+  group: { icon: Users, cls: "bg-purple-500/12 text-purple-600 dark:text-purple-400" },
 };
 
 function ago(iso: string) {
@@ -40,6 +47,7 @@ export function NotificationBell() {
   const [unread, setUnread] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [secured, setSecured] = useState<string | null>(null);
+  const [busyInvite, setBusyInvite] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   const load = useCallback(() => {
@@ -59,10 +67,12 @@ export function NotificationBell() {
     const onFocus = () => document.visibilityState === "visible" && load();
     document.addEventListener("visibilitychange", onFocus);
     window.addEventListener("proofolio:activated", load);
+    window.addEventListener(NOTIFICATIONS_CHANGED, load);
     return () => {
       clearInterval(id);
       document.removeEventListener("visibilitychange", onFocus);
       window.removeEventListener("proofolio:activated", load);
+      window.removeEventListener(NOTIFICATIONS_CHANGED, load);
     };
   }, [load]);
 
@@ -90,7 +100,7 @@ export function NotificationBell() {
       readLocally([n.id]);
       markNotificationsRead([n.id]).catch(() => {});
     }
-    if (n.link) {
+    if (n.link && n.kind !== "group_invite") {
       setOpen(false);
       router.push(n.link);
     }
@@ -101,6 +111,28 @@ export function NotificationBell() {
     readLocally([n.id]);
     markNotificationsRead([n.id]).catch(() => {});
     setSecured(n.id);
+  }
+
+  // The invite link is /chat?g=<group id>. Answering it updates the row on the server (it stops being an invite).
+  async function answerInvite(n: AppNotification, accept: boolean) {
+    const groupId = new URLSearchParams((n.link ?? "").split("?")[1] ?? "").get("g");
+    if (!groupId || busyInvite) return;
+    setBusyInvite(n.id);
+    try {
+      if (accept) {
+        const joined = await acceptGroupInvite(groupId);
+        setOpen(false);
+        load();
+        router.push(`/chat?c=${encodeURIComponent(joined.topic)}`);
+      } else {
+        await declineGroupInvite(groupId);
+        load();
+      }
+    } catch {
+      load();
+    } finally {
+      setBusyInvite(null);
+    }
   }
 
   return (
@@ -203,6 +235,32 @@ export function NotificationBell() {
                               This wasn&apos;t me
                             </button>
                           ))}
+                        {n.kind === "group_invite" && (
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              type="button"
+                              disabled={busyInvite === n.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                answerInvite(n, true);
+                              }}
+                              className="cursor-pointer rounded-full bg-ink px-3.5 py-1 text-[12px] font-semibold text-paper transition-opacity hover:opacity-90 disabled:opacity-50"
+                            >
+                              Accept
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busyInvite === n.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                answerInvite(n, false);
+                              }}
+                              className="cursor-pointer rounded-full border border-hairline px-3.5 py-1 text-[12px] font-semibold text-ink-700 transition-colors hover:bg-paper-dim disabled:opacity-50"
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        )}
                         <p className="mt-1 text-[12px] text-slate/80">{ago(n.created_at)}</p>
                       </div>
                       {!n.read && <span aria-label="Unread" className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-berry" />}
