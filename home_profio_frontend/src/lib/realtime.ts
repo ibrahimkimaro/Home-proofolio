@@ -22,6 +22,9 @@ export interface ChatMessage {
   } | null;
   reactions?: Record<string, string[]>; // emoji -> list of user_ids
   attachment?: ChatAttachment | null; // a file (image or document); text is then an optional caption
+  group_name?: string; // set on a notice for a group message: which group it was sent in
+  edited_at?: string | null; // the author corrected it
+  deleted_at?: string | null; // taken back: text and file are gone, the chat shows "This message was deleted"
 }
 
 /** One line for a chat list, pop-up or quoted reply: the text, or the file the message carries. */
@@ -120,7 +123,10 @@ export function subscribeToConversation(
     onPresence: (presences: UserPresence[]) => void;
     onReadReceipt: (data: ReadReceipt) => void;
     onReaction: (reaction: Reaction) => void;
-    onDeleted: (data: { id: string }) => void;
+    /** A message was taken back (the whole message, text blanked, with deleted_at). */
+    onDeleted: (data: ChatMessage) => void;
+    /** A message was edited: the whole message with its new text and edited_at. */
+    onEdited?: (msg: ChatMessage) => void;
     onJoinError: (reason: string) => void;
     /** Groups: an admin removed me (the server has already closed the channel). */
     onRemoved?: () => void;
@@ -143,6 +149,7 @@ export function subscribeToConversation(
   channel.on("messages_read", handlers.onReadReceipt);
   channel.on("msg_reaction", handlers.onReaction);
   channel.on("msg_deleted", handlers.onDeleted);
+  channel.on("msg_edited", (m: ChatMessage) => handlers.onEdited?.(m));
   channel.on("removed", () => handlers.onRemoved?.());
 
   channel
@@ -160,6 +167,28 @@ export function sendChannelMessage(channel: Channel, msg: ChatMessage): Promise<
       .push("new_msg", { id: msg.client_id, text: msg.text, reply_to: msg.reply_to, attachment: msg.attachment ?? undefined })
       .receive("ok", resolve)
       .receive("error", (err: { reason?: string }) => reject(new Error(err?.reason || "not sent")))
+      .receive("timeout", () => reject(new Error("timed out")));
+  });
+}
+
+/** Fix a typo in my own message (the server allows it for an hour). Resolves with the edited message. */
+export function sendEditMessage(channel: Channel, id: string, text: string): Promise<ChatMessage> {
+  return new Promise((resolve, reject) => {
+    channel
+      .push("edit_msg", { id, text })
+      .receive("ok", resolve)
+      .receive("error", (err: { reason?: string }) => reject(new Error(err?.reason || "not saved")))
+      .receive("timeout", () => reject(new Error("timed out")));
+  });
+}
+
+/** Take a message back (mine, or any message if I'm an admin of the group). Resolves with the blanked message. */
+export function sendDeleteMessage(channel: Channel, id: string): Promise<ChatMessage> {
+  return new Promise((resolve, reject) => {
+    channel
+      .push("delete_msg", { id })
+      .receive("ok", resolve)
+      .receive("error", (err: { reason?: string }) => reject(new Error(err?.reason || "not deleted")))
       .receive("timeout", () => reject(new Error("timed out")));
   });
 }
@@ -259,6 +288,8 @@ function startInbox(userId: string) {
         });
         listeners.forEach((l) => l.onNotice?.(msg));
       });
+      // A message in a group: a pop-up and sound, but not a direct-message unread count (those are counted by the server).
+      ch.on("group_notice", (msg: ChatMessage) => listeners.forEach((l) => l.onNotice?.(msg)));
       ch.on("typing", (e: TypingEvent) =>
         setInbox({
           typing: e.is_typing

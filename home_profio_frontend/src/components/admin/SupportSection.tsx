@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Headset } from "lucide-react";
-import { fetchSupportThreads, type SupportThread, type User } from "@/lib/api";
+import { Headset, Trash2 } from "lucide-react";
+import { clearChat, fetchSupportThreads, type SupportThread, type User } from "@/lib/api";
 import { useChatInbox } from "@/components/chat/ChatNotifier";
 import { SupportChat } from "@/components/chat/SupportChat";
 
@@ -30,6 +30,19 @@ export function SupportSection({ admin, onError }: { admin: User; onError: (m: s
     const id = setInterval(load, 20000);
     return () => clearInterval(id);
   }, [load]);
+
+  // "Delete chat" for myself: this thread leaves my list (the member or guest still has their copy); it returns,
+  // with only the new messages, if they write again.
+  async function deleteThread(t: SupportThread) {
+    if (!window.confirm(`Delete your chat with ${t.name} for yourself? ${t.is_guest ? "The visitor" : "They"} keep their copy.`)) return;
+    try {
+      await clearChat(t.topic);
+      setThreads((list) => list.filter((x) => x.topic !== t.topic));
+      setOpen((o) => (o?.topic === t.topic ? null : o));
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Could not delete the chat");
+    }
+  }
 
   const me = { id: admin.id, name: "Home Proofolio Support", username: admin.username || "support" };
 
@@ -72,7 +85,7 @@ export function SupportSection({ admin, onError }: { admin: User; onError: (m: s
       <div className="flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-hairline bg-paper">
         {open ? (
           <>
-            <div className="border-b border-hairline px-4 py-3">
+            <div className="flex items-center justify-between gap-3 border-b border-hairline px-4 py-3">
               <p className="flex items-center gap-2 text-[14px] font-semibold text-ink-800">
                 {open.name} <span className="font-normal text-slate">@{open.username}</span>
                 {open.is_guest && (
@@ -81,6 +94,15 @@ export function SupportSection({ admin, onError }: { admin: User; onError: (m: s
                   </span>
                 )}
               </p>
+              <button
+                type="button"
+                onClick={() => deleteThread(open)}
+                title="Delete this chat for me"
+                aria-label="Delete this chat for me"
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-hairline px-2.5 py-1.5 text-[12px] font-semibold text-berry hover:bg-berry/5"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete chat
+              </button>
             </div>
             <SupportChat key={open.topic} me={me} topic={open.topic} peerName={open.name} />
           </>

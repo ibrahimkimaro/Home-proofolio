@@ -10,6 +10,7 @@ import { CaptureBar, type CaptureHandle } from "@/components/app/CaptureBar";
 import { ItemRow, PublishReview, ShapeSheet } from "@/components/app/Items";
 import { PortfolioPreview } from "@/components/app/PortfolioPreview";
 import { ActivityChart } from "@/components/app/ActivityChart";
+import { LifeWellnessModule } from "@/components/app/LifeWellnessModule";
 
 const LIST_MAX = 4;
 
@@ -59,7 +60,7 @@ function Home({ user }: { user: User }) {
   // PRD: a new member sees only the capture bar and one line of guidance.
   if (isNew) {
     return (
-      <div className="mx-auto w-full max-w-2xl px-4 pt-[12vh] sm:px-6">
+      <div className="mx-auto max-w-full px-4 pt-[12vh] sm:px-6">
         <h1 className="mb-6 px-1 text-[28px] font-bold tracking-tight sm:text-[34px]">{hello}</h1>
         <CaptureBar ref={captureRef} onCaptured={() => load()} />
         <p className="mt-5 px-2 text-[15px] leading-relaxed text-slate">
@@ -81,9 +82,12 @@ function Home({ user }: { user: User }) {
     <div className="mx-auto w-full max-w-full space-y-4 px-4 pt-6 sm:px-6 md:pt-8">
       <IdentityBanner user={user} hello={hello} data={data} />
 
-      <div className="grid items-start gap-4 lg:grid-cols-12">
+      {/* Holistic Life, Wellness & Daily Pulse Module */}
+      <LifeWellnessModule />
+
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
         {/* Left: act — capture, then the three action lists */}
-        <div className="space-y-4 lg:col-span-8">
+        <div className="min-w-0 space-y-4 lg:col-span-8">
           <section>
             <p className="mb-2 px-1 text-[13px] font-semibold text-slate">Capture</p>
             <CaptureBar ref={captureRef} onCaptured={() => load()} />
@@ -99,7 +103,7 @@ function Home({ user }: { user: User }) {
           )}
 
           {data === null && !failed && (
-            <div className="grid gap-4 md:grid-cols-2" aria-hidden="true">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2" aria-hidden="true">
               {[0, 1].map((i) => (
                 <div key={i} className="h-48 animate-pulse rounded-2xl bg-paper" />
               ))}
@@ -108,7 +112,7 @@ function Home({ user }: { user: User }) {
 
           {data &&
             (lists.length > 0 ? (
-              <div className="grid gap-4 md:grid-cols-2 [&>*:last-child:nth-child(odd)]:md:col-span-2">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 [&>*:last-child:nth-child(odd)]:md:col-span-2">
                 {lists.map((l) => (
                   <Tile key={l.key} title={l.title} icon={l.icon} count={l.items.length}>
                     <ul className="-mx-2">
@@ -145,7 +149,7 @@ function Home({ user }: { user: User }) {
         </div>
 
         {/* Right: the public face and momentum */}
-        <div className="space-y-4 lg:col-span-4">
+        <div className="min-w-0 space-y-4 lg:col-span-4">
           <section>
             <p className="mb-2 px-1 text-[13px] font-semibold text-slate">Public face</p>
             {data ? (
@@ -174,8 +178,8 @@ function IdentityBanner({ user, hello, data }: { user: User; hello: string; data
     ["Days active", data?.counts.days_active],
   ];
   return (
-    <section className="pf-surface rounded-2xl border border-hairline bg-paper shadow-sm">
-      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:p-6">
+    <section className="pf-surface mx-auto w-full max-w-full rounded-2xl border border-hairline bg-paper shadow-sm overflow-hidden">
+      <div className="flex w-full max-w-full flex-col gap-4 p-5 sm:flex-row sm:items-center sm:p-6">
         <Avatar name={displayName(user)} src={p.avatar_url} className="h-14 w-14 text-[18px]" />
         <div className="min-w-0 flex-1">
           <h1 className="text-[22px] font-bold tracking-tight sm:text-[26px]">{hello}</h1>

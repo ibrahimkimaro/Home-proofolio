@@ -40,14 +40,19 @@ import {
 } from "lucide-react";
 import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { ShareCardButton } from "@/components/app/ShareCard";
+import { CommunitySection } from "@/components/app/Engage";
+import { ContactRows, SocialPills } from "@/components/app/ContactLinks";
+import { allContacts } from "@/lib/contact";
 import {
   fetchCurrentUser,
   fetchPortfolio,
   listMyRoles,
   listWork,
   mediaUrl,
+  type ContactItem,
   type PortfolioSection,
   type PortfolioSettings,
+  type SocialLink,
   type Profile,
   type PublicProfile,
   type User,
@@ -218,6 +223,12 @@ export default function MyPortfolio({
   const bio = portfolio?.tagline || profile?.headline || profile?.bio || "";
   // Public contact is opt-in (Portfolio settings); the sign-in email is private.
   const contactEmailAddress = portfolio?.contact_email || "";
+  // Everything the member chose to show: the main email, extra emails and numbers, social profiles.
+  const contactList = allContacts(portfolio?.contact_email, portfolio?.contacts);
+  const socialList = portfolio?.socials ?? [];
+  const hasContact = contactList.length > 0 || socialList.length > 0;
+  // The message form opens the visitor's email app, addressed to the main email (or the first one listed).
+  const formEmail = contactEmailAddress || contactList.find((c) => c.kind === "email")?.value || "";
   const verified = publicProfile ? !!publicProfile.verified : !!user && !user.otp_pending;
 
   // Role list for the animated hero role switcher
@@ -286,11 +297,11 @@ export default function MyPortfolio({
 
   const handleContactSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!contactEmailAddress) return;
+    if (!formEmail) return;
     // There is no messaging service: hand the message to the visitor's own email app.
     const subject = `Hello from ${contactName || "a visitor"} via Home Proofolio`;
     const body = `${contactMsg}\n\n${contactName}${contactEmail ? ` (${contactEmail})` : ""}`;
-    window.location.href = `mailto:${contactEmailAddress}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = `mailto:${formEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     setContactSubmitted(true);
   };
 
@@ -624,7 +635,7 @@ export default function MyPortfolio({
                 </div>
 
                 {/* Social Links (only what the member shared) */}
-                <div className={`mt-8 pt-6 border-t border-neutral-200 dark:border-neutral-800 items-center gap-3 ${contactEmailAddress ? "flex" : "hidden"}`}>
+                <div className={`mt-8 pt-6 border-t border-neutral-200 dark:border-neutral-800 items-center gap-3 flex-wrap ${hasContact ? "flex" : "hidden"}`}>
                   <span className="text-xs uppercase tracking-widest font-extrabold text-neutral-500 dark:text-neutral-400">
                     Connect:
                   </span>
@@ -635,6 +646,12 @@ export default function MyPortfolio({
                       title="Direct Email"
                     >
                       <Mail className="h-4 w-4" />
+                    </a>
+                  )}
+                  <SocialPills socials={socialList} />
+                  {contactList.length > (contactEmailAddress ? 1 : 0) && (
+                    <a href="#contact" onClick={(e) => scrollToSection(e, "#contact")} className="text-[13px] font-semibold text-neutral-700 underline dark:text-neutral-300">
+                      More ways to reach me
                     </a>
                   )}
                 </div>
@@ -829,9 +846,9 @@ export default function MyPortfolio({
                   </div>
                 </div>
 
-                {contactEmailAddress && (
+                {formEmail && (
                   <a
-                    href={`mailto:${contactEmailAddress}`}
+                    href={`mailto:${formEmail}`}
                     className="mt-6 w-full py-3 rounded-xl bg-neutral-950 text-white dark:bg-white dark:text-neutral-950 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-md"
                   >
                     <Mail className="w-4 h-4" />
@@ -891,8 +908,13 @@ export default function MyPortfolio({
         {/* ==========================================
             11. CONTACT SECTION
             ========================================== */}
-        {contactEmailAddress && <ContactSection
-          contactEmail={contactEmailAddress}
+        {/* Who starred and commented: a short, simple look; the full list opens on tap */}
+        {username && <CommunitySection username={username} displayName={displayName} followers={publicProfile?.followers} />}
+
+        {hasContact && <ContactSection
+          contactEmail={formEmail}
+          contacts={contactList}
+          socials={socialList}
           submitted={contactSubmitted}
           name={contactName}
           email={contactEmail}
@@ -1405,6 +1427,8 @@ function AchievementsSection({ achievementWorks }: { achievementWorks: Work[] })
 // ==========================================
 function ContactSection({
   contactEmail,
+  contacts,
+  socials,
   submitted,
   name,
   email,
@@ -1415,6 +1439,8 @@ function ContactSection({
   onSubmit,
 }: {
   contactEmail: string;
+  contacts: ContactItem[];
+  socials: SocialLink[];
   submitted: boolean;
   name: string;
   email: string;
@@ -1443,23 +1469,14 @@ function ContactSection({
         </div>
 
         <div className="max-w-5xl 2xl:max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          {/* Left: Contact Context & Direct Details */}
-          <div className="lg:col-span-5 p-6 sm:p-8 rounded-3xl border-2 border-neutral-200 dark:border-neutral-700/80 bg-white dark:bg-[#13151b] shadow-xl space-y-6">
-            <div className="flex items-center gap-3 text-xs font-bold">
-              <div className="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-                <Mail className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="text-neutral-500 block text-[11px]">Email</span>
-                <a href={`mailto:${contactEmail}`} className="text-neutral-950 dark:text-white hover:underline text-sm font-semibold break-all">
-                  {contactEmail}
-                </a>
-              </div>
-            </div>
+          {/* Left: every way to reach them */}
+          <div className={`${contactEmail ? "lg:col-span-5" : "lg:col-span-12 max-w-xl w-full mx-auto"} p-6 sm:p-8 rounded-3xl border-2 border-neutral-200 dark:border-neutral-700/80 bg-white dark:bg-[#13151b] shadow-xl space-y-6`}>
+            <ContactRows contacts={contacts} />
+            <SocialPills socials={socials} />
           </div>
 
-          {/* Right: The Form Card */}
-          <div className="lg:col-span-7 p-6 sm:p-10 rounded-3xl border-2 border-neutral-200 dark:border-neutral-700/80 bg-white dark:bg-[#13151b] shadow-2xl">
+          {/* Right: The Form Card (needs an email to open the visitor's mail app to) */}
+          {contactEmail && <div className="lg:col-span-7 p-6 sm:p-10 rounded-3xl border-2 border-neutral-200 dark:border-neutral-700/80 bg-white dark:bg-[#13151b] shadow-2xl">
             {submitted ? (
               <div className="text-center py-10 space-y-4">
                 <div className="w-16 h-16 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 mx-auto flex items-center justify-center">
@@ -1524,7 +1541,7 @@ function ContactSection({
                 </button>
               </form>
             )}
-          </div>
+          </div>}
         </div>
       </motion.div>
     </section>

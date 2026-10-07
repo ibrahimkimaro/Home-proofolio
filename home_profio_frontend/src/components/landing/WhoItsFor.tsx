@@ -14,6 +14,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Reveal } from "./Reveal";
+import { DisciplineFinder } from "./DisciplineFinder";
 
 const ROLES = [
   {
@@ -117,18 +118,18 @@ export function WhoItsFor() {
                 transition={{ duration: 0.45, delay: idx * 0.05 }}
                 onClick={() => setSelectedRole(role.id)}
                 className={`apple-card-hover group relative flex flex-col justify-between rounded-2xl border p-4 sm:p-6 transition-all cursor-pointer ${isHovered
-                    ? "border-ink-700/40 apple-glass-frosted shadow-xl ring-1 ring-ink-700/10"
-                    : "border-hairline/80 bg-paper/75 backdrop-blur-xl hover:bg-paper/95 shadow-2xs hover:shadow-md"
+                  ? "border-ink-700/40 shadow-xl ring-1 ring-ink-700/10"
+                  : "border-hairline/80 bg-paper/75 backdrop-blur-xl hover:bg-paper/95 shadow-2xs hover:shadow-md"
                   }`}
               >
                 <div>
                   <div className="flex items-center justify-between">
                     <span
                       className={`flex h-10 w-10 sm:h-11 sm:w-11 items-center justify-center rounded-xl transition-transform group-hover:scale-110 ${role.accent === "brass"
-                          ? "bg-brass/15 text-brass-dark"
-                          : role.accent === "emerald"
-                            ? "bg-emerald-500/15 text-emerald-700"
-                            : "bg-berry/15 text-berry"
+                        ? "bg-brass/15 text-brass-dark"
+                        : role.accent === "emerald"
+                          ? "bg-emerald-500/15 text-emerald-700"
+                          : "bg-berry/15 text-berry"
                         }`}
                     >
                       <Icon className="h-5 w-5" />

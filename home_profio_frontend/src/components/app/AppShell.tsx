@@ -31,6 +31,8 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { AvatarImage } from "@/components/app/AvatarImage";
 import { AnnouncementBar } from "@/components/app/AnnouncementBar";
 import { ActivationBanner } from "@/components/app/Activation";
+import { CodeBanner } from "@/components/app/CodePrompt";
+import { OnboardingFlush } from "@/components/app/OnboardingFlush";
 import { NotificationBell } from "@/components/app/Notifications";
 import { adoptAccountAppearance, forgetAdoptedAppearance, type Appearance } from "@/lib/appearance";
 import { fetchCurrentUser, logoutUser, mediaUrl, type User } from "@/lib/api";
@@ -253,8 +255,15 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
     router.replace("/login");
   }
 
+  // Not activated in time: only /suspended (support + the code dialog) is open.
+  const suspended = !!user.suspended;
+  useEffect(() => {
+    if (suspended) router.replace("/suspended");
+  }, [suspended, router]);
+  if (suspended) return <div className="min-h-screen bg-paper-dim" />;
+
   return (
-    <div className="theme-mono pf-ambient flex min-h-screen w-full bg-paper-dim text-ink-800">
+    <div className="theme-mono pf-ambient flex min-h-screen w-full max-w-full overflow-x-hidden bg-paper-dim text-ink-800">
       {/* Desktop sidebar: the places, community, and public face */}
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col overflow-y-auto border-r border-hairline bg-paper px-3 md:flex">
         <Link href="/home" className="flex h-16 shrink-0 items-center gap-2.5 px-3">
@@ -285,10 +294,10 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
         </nav>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 w-full max-w-full flex-1 flex-col overflow-x-hidden">
         {/* Top bar: search, Add, account (desktop) / logo, account (mobile) */}
         <header
-          className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-hairline/50 bg-paper/85 px-4 backdrop-blur-xl sm:px-6"
+          className="sticky top-0 z-30 flex h-16 w-full items-center gap-3 border-b border-hairline/50 bg-paper/85 px-4 backdrop-blur-xl sm:px-6"
           style={{ paddingTop: "env(safe-area-inset-top)" }}
         >
           <div className="flex items-center gap-2.5 md:hidden">
@@ -330,6 +339,8 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
         </header>
 
         <ActivationBanner user={user} />
+        <CodeBanner />
+        <OnboardingFlush />
         <AnnouncementBar />
         <main className={`flex-1 ${pathname === "/chat" ? "pb-0 md:pb-12 overflow-hidden" : "pb-28 md:pb-12"}`}>{children}</main>
       </div>
@@ -340,7 +351,7 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
       {/* Mobile bottom bar: Home, Messages, Add, Community Hub, Profile */}
       <nav
         aria-label="Main"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-hairline/60 bg-paper/90 backdrop-blur-xl md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 w-full border-t border-hairline/60 bg-paper/90 backdrop-blur-xl md:hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <ul className="grid h-16 grid-cols-5 items-center">
@@ -436,8 +447,8 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
                     href={item.href}
                     onClick={() => setCommunityHubOpen(false)}
                     className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border transition-all active:scale-95 text-center group cursor-pointer ${active
-                        ? "bg-ink text-paper border-ink shadow-sm"
-                        : "bg-paper-dim/40 hover:bg-paper-dim border-hairline/50 hover:border-hairline"
+                      ? "bg-ink text-paper border-ink shadow-sm"
+                      : "bg-paper-dim/40 hover:bg-paper-dim border-hairline/50 hover:border-hairline"
                       }`}
                   >
                     <div

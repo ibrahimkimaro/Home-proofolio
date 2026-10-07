@@ -218,18 +218,21 @@ async def get_chat_contacts(
         WITH latest_msgs AS (
           SELECT DISTINCT ON (CASE WHEN author_id = :viewer_id THEN recipient_id ELSE author_id END)
             CASE WHEN author_id = :viewer_id THEN recipient_id ELSE author_id END AS peer_id,
-            body,
+            CASE WHEN deleted_at IS NOT NULL THEN 'This message was deleted' ELSE body END AS body,
             inserted_at,
             topic
           FROM chat_messages
           WHERE (author_id = :viewer_id OR recipient_id = :viewer_id)
             AND topic LIKE 'direct:%'
+            -- what this member cleared with "Delete chat" is gone for them (the chat returns with the next message)
+            AND id > COALESCE((SELECT up_to FROM chat_clears cc WHERE cc.user_id = :viewer_id AND cc.topic = chat_messages.topic), 0)
           ORDER BY CASE WHEN author_id = :viewer_id THEN recipient_id ELSE author_id END, id DESC
         ),
         unread_counts AS (
           SELECT author_id AS peer_id, COUNT(*) AS unread_count
           FROM chat_messages
-          WHERE recipient_id = :viewer_id AND read_at IS NULL
+          WHERE recipient_id = :viewer_id AND read_at IS NULL AND deleted_at IS NULL
+            AND id > COALESCE((SELECT up_to FROM chat_clears cc WHERE cc.user_id = :viewer_id AND cc.topic = chat_messages.topic), 0)
           GROUP BY author_id
         )
         SELECT 

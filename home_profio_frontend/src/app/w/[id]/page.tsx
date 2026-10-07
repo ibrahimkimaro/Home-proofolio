@@ -5,6 +5,7 @@ import { getPublicWork, getTemplates, SITE_URL } from "@/lib/server-api";
 import { KINDS, kindOf, stateLabel } from "@/lib/items";
 import { Card, PublicAvatar, PublicFooter, PublicHeader, SectionTitle } from "@/components/app/PublicChrome";
 import { FollowButton } from "@/components/app/FollowButton";
+import { BackToPortfolio, WorkEngagement } from "@/components/app/Engage";
 import { ProofChips } from "@/components/app/WorkCard";
 
 type Props = { params: Promise<{ id: string }> };
@@ -46,7 +47,8 @@ export default async function PublicWorkPage({ params }: Props) {
   return (
     <div className="theme-mono pf-ambient min-h-screen bg-paper text-ink-800">
       <PublicHeader />
-      <main className="mx-auto max-w-3xl space-y-4 px-5 sm:px-8">
+      <main className="mx-auto max-w-3xl space-y-4 px-4 sm:px-8">
+        <BackToPortfolio username={owner.username} name={owner.display_name} className="max-w-full" />
         <Card>
           <p className="text-[14px] text-slate">
             {KINDS.find((k) => k.id === kind)?.label}
@@ -116,6 +118,11 @@ export default async function PublicWorkPage({ params }: Props) {
             </p>
           </Card>
         )}
+        <WorkEngagement workId={work.id} title={work.title} />
+
+        <div className="flex justify-center pt-2">
+          <BackToPortfolio username={owner.username} name={owner.display_name} className="max-w-full" />
+        </div>
       </main>
       <PublicFooter />
     </div>

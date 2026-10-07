@@ -45,6 +45,7 @@ import {
 } from "@/lib/api";
 import { AppShell, AppShellSkeleton, useSession } from "@/components/app/AppShell";
 import { ActivateButton, usePendingActivation } from "@/components/app/Activation";
+import { NotificationControls } from "@/components/app/NotificationControls";
 import {
   ACCENTS,
   DEFAULT_APPEARANCE,
@@ -782,6 +783,10 @@ function ChatPrivacy() {
     }
   };
   return (
+    <>
+    <Section title="Message alerts" hint="How you hear about new messages when you are not in that chat.">
+      <NotificationControls />
+    </Section>
     <Section title="Chat">
       <label className="flex cursor-pointer items-center justify-between gap-4">
         <span>
@@ -801,6 +806,7 @@ function ChatPrivacy() {
       </label>
       {error && <p className="mt-3 text-[13px] text-berry">{error}</p>}
     </Section>
+    </>
   );
 }
 

@@ -30,3 +30,6 @@ config :realtime_chat, :ice,
 
 # Must equal the backend's SECRET_KEY: it signs the chat tokens the backend hands out (GET /chat/token).
 config :realtime_chat, :secret_key, System.get_env("SECRET_KEY", "dev-only-change-me")
+
+# Where the backend (FastAPI) listens, to ask it to send Web Push notifications (see RealtimeChat.Push).
+config :realtime_chat, :backend_url, System.get_env("BACKEND_URL", "http://backend:8000")

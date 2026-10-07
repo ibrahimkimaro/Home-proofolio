@@ -3,7 +3,7 @@ defmodule RealtimeChat.Messages do
   require Logger
 
   @db RealtimeChat.DB
-  @cols "client_id, id, topic, author_id::text, author_name, author_username, body, reply_to, inserted_at, recipient_id::text, read_at, attachment"
+  @cols "client_id, id, topic, author_id::text, author_name, author_username, body, reply_to, inserted_at, recipient_id::text, read_at, attachment, edited_at, deleted_at"
   @max_seq 9_223_372_036_854_775_807
 
   # (author_id, client_id) is unique, so a client resending after a lost ack gets the same row back.
@@ -67,13 +67,107 @@ defmodule RealtimeChat.Messages do
 
   @doc "Up to `limit` messages with after < seq < before, oldest first, and whether older ones exist."
   def page(topic, limit, opts \\ []) do
+    # `min`: what this member cleared with "Delete chat": messages up to there are gone for them, whatever `after` says.
+    lower = max(opts[:after] || 0, opts[:min] || 0)
+
     rows =
       query(
         "SELECT * FROM (SELECT #{@cols} FROM chat_messages WHERE topic = $1 AND id > $2 AND id < $3 ORDER BY id DESC LIMIT $4) t ORDER BY id",
-        [topic, opts[:after] || 0, opts[:before] || @max_seq, limit + 1]
+        [topic, lower, opts[:before] || @max_seq, limit + 1]
       )
 
     if length(rows) > limit, do: {tl(rows), true}, else: {rows, false}
+  end
+
+  @free_messages 5
+
+  @doc """
+  Whether this member may use this conversation. A member who hasn't activated their account yet may send
+  #{@free_messages} messages to other members (support is always open); once their 15 minutes after the code are up they
+  are suspended: support only. `recipient` is the other person of a 1:1 chat (nil in a group); `cid` lets a resend of an
+  already stored message through. Returns :ok, {:error, :suspended} or {:error, :limit}.
+  """
+  def gate(user_id, recipient, cid \\ nil) do
+    sql = """
+    SELECT u.otp_pending,
+           (u.activation_deadline IS NOT NULL AND u.activation_deadline < now()),
+           CASE WHEN $2::text IS NULL THEN false ELSE COALESCE((SELECT r.is_admin FROM users r WHERE r.id = $2::text::uuid), false) END,
+           (SELECT count(*) FROM chat_messages m
+             WHERE m.author_id = u.id AND m.client_id NOT LIKE 'sys-%'
+               AND (m.recipient_id IS NULL OR NOT COALESCE((SELECT r.is_admin FROM users r WHERE r.id = m.recipient_id), false))),
+           CASE WHEN $3::text IS NULL THEN false ELSE EXISTS (SELECT 1 FROM chat_messages m WHERE m.author_id = u.id AND m.client_id = $3::text) END
+    FROM users u WHERE u.id = $1::text::uuid
+    """
+
+    case Postgrex.query(@db, sql, [user_id, recipient, cid]) do
+      {:ok, %{rows: [[true, suspended, to_admin, sent, resend]]}} ->
+        cond do
+          to_admin -> :ok
+          suspended -> {:error, :suspended}
+          sent >= @free_messages and not resend -> {:error, :limit}
+          true -> :ok
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  @doc "The newest message id this member cleared in `topic` with \"Delete chat\" (0 = never)."
+  def cleared_up_to(topic, user_id) do
+    case Postgrex.query(@db, "SELECT up_to FROM chat_clears WHERE user_id = $1::text::uuid AND topic = $2", [user_id, topic]) do
+      {:ok, %{rows: [[n]]}} -> n
+      _ -> 0
+    end
+  end
+
+  @doc "True when this user is an admin of the group behind room `slug`."
+  def group_admin?(slug, user_id) do
+    case Postgrex.query(
+           @db,
+           "SELECT 1 FROM chat_group_members m JOIN chat_groups g ON g.id = m.group_id WHERE g.slug = $1 AND m.user_id = $2::text::uuid AND m.status = 'member' AND m.role = 'admin'",
+           [slug, user_id]
+         ) do
+      {:ok, %{num_rows: n}} -> n > 0
+      _ -> false
+    end
+  end
+
+  # A typo fix: only the author, only their own text messages, only for a while (`window_s` seconds).
+  @edit """
+  UPDATE chat_messages SET body = $4, edited_at = now()
+  WHERE id = $1 AND topic = $2 AND author_id = $3::text::uuid AND deleted_at IS NULL
+    AND client_id NOT LIKE 'sys-%' AND inserted_at > now() - ($5::int * interval '1 second')
+  RETURNING #{@cols}
+  """
+
+  def edit(topic, seq, user_id, text, window_s) do
+    case Postgrex.query(@db, @edit, [seq, topic, user_id, text, window_s]) do
+      {:ok, %{rows: [row]}} -> {:ok, to_map(row)}
+      {:ok, _} -> {:error, "you can only edit your own recent messages"}
+      {:error, err} ->
+        Logger.error("chat edit failed: #{Exception.message(err)}")
+        {:error, "not saved, retry"}
+    end
+  end
+
+  # Taking a message back: the author, or an admin of the group. The row stays (history order, replies and
+  # paging keep working) but its text and file are blanked, and the chat shows "This message was deleted".
+  @delete """
+  UPDATE chat_messages SET body = '', attachment = NULL, edited_at = NULL, deleted_at = now()
+  WHERE id = $1 AND topic = $2 AND deleted_at IS NULL AND client_id NOT LIKE 'sys-%'
+    AND (author_id = $3::text::uuid OR $4::boolean)
+  RETURNING #{@cols}
+  """
+
+  def delete(topic, seq, user_id, group_admin?) do
+    case Postgrex.query(@db, @delete, [seq, topic, user_id, group_admin?]) do
+      {:ok, %{rows: [row]}} -> {:ok, to_map(row)}
+      {:ok, _} -> {:error, "you can only delete your own messages"}
+      {:error, err} ->
+        Logger.error("chat delete failed: #{Exception.message(err)}")
+        {:error, "not deleted, retry"}
+    end
   end
 
   @doc "Reader has seen everything sent to them in `topic` up to seq. Returns how many became read."
@@ -93,7 +187,7 @@ defmodule RealtimeChat.Messages do
     %{rows: rows} =
       Postgrex.query!(
         @db,
-        "SELECT topic, count(*) FROM chat_messages WHERE recipient_id = $1::text::uuid AND read_at IS NULL GROUP BY topic",
+        "SELECT m.topic, count(*) FROM chat_messages m LEFT JOIN chat_clears c ON c.user_id = m.recipient_id AND c.topic = m.topic WHERE m.recipient_id = $1::text::uuid AND m.read_at IS NULL AND m.deleted_at IS NULL AND m.id > COALESCE(c.up_to, 0) GROUP BY m.topic",
         [user_id]
       )
 
@@ -133,6 +227,18 @@ defmodule RealtimeChat.Messages do
 
     bell_changed(user_id)
     result
+  end
+
+  @doc "{group name, member ids} of the members (accepted) of room `slug` other than the author. Nil if there is no such group."
+  def group_recipients(slug, author_id) do
+    case Postgrex.query(
+           @db,
+           "SELECT g.name, m.user_id::text FROM chat_groups g JOIN chat_group_members m ON m.group_id = g.id WHERE g.slug = $1 AND m.status = 'member' AND m.user_id <> $2::text::uuid",
+           [slug, author_id]
+         ) do
+      {:ok, %{rows: [[name, _] | _] = rows}} -> {name, Enum.map(rows, fn [_, id] -> id end)}
+      _ -> nil
+    end
   end
 
   defp bell_changed(user_id), do: RealtimeChatWeb.Endpoint.broadcast("user:" <> user_id, "notifications_changed", %{})
@@ -189,7 +295,7 @@ defmodule RealtimeChat.Messages do
     end
   end
 
-  defp to_map([client_id, seq, topic, author_id, name, username, body, reply_to, at, recipient_id, read_at, attachment]) do
+  defp to_map([client_id, seq, topic, author_id, name, username, body, reply_to, at, recipient_id, read_at, attachment, edited_at, deleted_at]) do
     %{
       id: Integer.to_string(seq),
       seq: seq,
@@ -203,7 +309,9 @@ defmodule RealtimeChat.Messages do
       reply_to: reply_to,
       attachment: attachment,
       timestamp: DateTime.to_iso8601(at),
-      read_at: read_at && DateTime.to_iso8601(read_at)
+      read_at: read_at && DateTime.to_iso8601(read_at),
+      edited_at: edited_at && DateTime.to_iso8601(edited_at),
+      deleted_at: deleted_at && DateTime.to_iso8601(deleted_at)
     }
   end
 end

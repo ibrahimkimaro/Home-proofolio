@@ -9,5 +9,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-devtunnel.ps1"
 if %ERRORLEVEL% NEQ 0 (
     echo.
     echo Dev Tunnel exited with error code %ERRORLEVEL%.
-    pause
 )
+echo.
+pause

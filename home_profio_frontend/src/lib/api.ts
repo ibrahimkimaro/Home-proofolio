@@ -9,7 +9,34 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+// Fewer API calls. Several components often ask for the same thing at the same moment (who am I, platform
+// status, notifications): identical GETs in flight share one request, and a few lookups that rarely change are
+// reused for a few seconds. Any write (POST/PUT/PATCH/DELETE) forgets what was kept, so nothing goes stale.
+const inflight = new Map<string, Promise<unknown>>();
+const recent = new Map<string, { at: number; value: unknown }>();
+const REUSE_MS: Record<string, number> = { "/auth/me": 4_000, "/platform": 30_000, "/push/key": 300_000 };
+
+function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const plainGet = (options.method ?? "GET").toUpperCase() === "GET" && Object.keys(options).length === 0;
+  if (!plainGet) {
+    if ((options.method ?? "GET").toUpperCase() !== "GET") recent.clear();
+    return send<T>(path, options);
+  }
+  const kept = recent.get(path);
+  if (kept && Date.now() - kept.at < (REUSE_MS[path] ?? 0)) return Promise.resolve(kept.value as T);
+  const pending = inflight.get(path);
+  if (pending) return pending as Promise<T>;
+  const p = send<T>(path, options)
+    .then((value) => {
+      if (REUSE_MS[path]) recent.set(path, { at: Date.now(), value });
+      return value;
+    })
+    .finally(() => inflight.delete(path));
+  inflight.set(path, p);
+  return p;
+}
+
+async function send<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     credentials: "include",
@@ -27,7 +54,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         : Array.isArray(body.detail)
           ? body.detail.map((e: { msg: string }) => e.msg).join(", ")
           : res.statusText;
-    throw new ApiError(res.status, message);
+    // Not activated in time: everything but support is closed. The suspended page explains and offers the code.
+    if (res.status === 403 && message === "account_suspended" && typeof window !== "undefined" && window.location.pathname !== "/suspended") {
+      window.location.assign("/suspended");
+    }
+    throw new ApiError(res.status, message === "account_suspended" ? "Your account is suspended. Activate it to continue." : message);
   }
 
   if (res.status === 204) {
@@ -55,6 +86,9 @@ export interface User {
   is_admin?: boolean;
   /** Signed up with a phone and hasn't entered the OTP yet. */
   otp_pending?: boolean;
+  /** Not activated within 15 minutes of the code: only support (and entering a code) works. */
+  suspended?: boolean;
+  activation_deadline?: string | null;
   created_at: string;
   profile: Profile;
   preferences?: { appearance?: Record<string, string> };
@@ -75,8 +109,16 @@ export function loginUser(payload: { email: string; password: string }) {
   return request<User>("/auth/login", { method: "POST", body: JSON.stringify(payload) });
 }
 
-export function logoutUser() {
+async function logoutRequest() {
   return request<void>("/auth/logout", { method: "POST" });
+}
+
+/** Sign out. This device first stops receiving this member's notifications (the next person can turn theirs on). */
+export async function logoutUser() {
+  try {
+    await (await import("./push")).forgetThisDevice();
+  } catch {}
+  return logoutRequest();
 }
 
 export function fetchCurrentUser() {
@@ -101,6 +143,18 @@ export interface OtpGenerateResponse {
   channel: string;
   code: string;
   expires_in_seconds: number;
+  /** emailed = went out by email; manual = waiting for an admin to send it. */
+  delivery: "emailed" | "manual";
+  /** The member this code is for, if the address or number belongs to exactly one. */
+  user_name: string | null;
+}
+
+export interface OtpRecipient {
+  id: string;
+  name: string;
+  username: string;
+  email: string;
+  phone: string | null;
 }
 
 /** Activate a suspended account. 400 = wrong code, 410 = code expired or cancelled (ask for a new one). */
@@ -115,6 +169,8 @@ export interface ActivationStatus {
   /** An admin has delivered it; the 15-minute countdown runs from then. */
   sent: boolean;
   expires_in_seconds: number | null;
+  /** Seconds until the account is suspended (set once the first code has gone out). */
+  suspends_in_seconds?: number | null;
   resend_in_seconds: number;
 }
 
@@ -159,6 +215,8 @@ export interface AdminOtpLog {
   purpose: string;
   is_verified: boolean;
   delivery_status: string;
+  /** "email" = the system emailed it, "admin" = sent by hand, null = not sent yet. */
+  sent_via: string | null;
   expires_at: string;
   created_at: string;
   verified_at: string | null;
@@ -220,19 +278,41 @@ export function deleteAdminWork(id: string) {
 }
 
 /** Admin has texted or emailed this code; the member's 15 minutes start now. */
+export function resendOtpEmail(id: string) {
+  return request<{ queued: boolean }>(`/admin/otps/${id}/email`, { method: "POST" });
+}
+
 export function markOtpSent(id: string) {
   return request<AdminOtpLog>(`/admin/otps/${id}/sent`, { method: "POST" });
 }
 
-export function simulateAdminOtp(payload: { destination: string; channel?: string; purpose?: string }) {
-  return request<OtpGenerateResponse>("/admin/otps/simulate", {
-    method: "POST",
-    body: JSON.stringify({
-      destination: payload.destination,
-      channel: payload.channel ?? "phone",
-      purpose: payload.purpose ?? "admin_test",
-    }),
-  });
+/** A code an admin sent this member (2FA sign-in, password change...), still waiting to be entered. */
+export interface MemberCode {
+  id: string;
+  purpose: string;
+  label: string;
+  channel: string;
+  /** Masked: i•••@gmail.com or •••• 123. */
+  destination: string;
+  expires_in_seconds: number;
+}
+export const fetchMyCodes = () => request<MemberCode[]>("/me/codes");
+export const verifyMyCode = (code: string) =>
+  request<{ verified: boolean; purpose: string; label: string }>("/me/codes/verify", { method: "POST", body: JSON.stringify({ code }) });
+
+// ---------- Web Push (backend app/api/push.py) ----------
+export const fetchPushKey = () => request<{ enabled: boolean; public_key: string | null }>("/push/key");
+export const subscribePush = (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
+  request<void>("/me/push/subscribe", { method: "POST", body: JSON.stringify(sub) });
+export const unsubscribePush = (endpoint: string) => request<void>("/me/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint }) });
+export const sendTestPush = () => request<{ sent: number }>("/me/push/test", { method: "POST" });
+
+export function sendAdminOtp(payload: { destination: string; channel: "email" | "phone"; purpose: string }) {
+  return request<OtpGenerateResponse>("/admin/otps/send", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function searchOtpRecipients(q: string) {
+  return request<OtpRecipient[]>(`/admin/otps/people?q=${encodeURIComponent(q)}`);
 }
 
 export type Visibility = "public" | "unlisted" | "private" | "draft";
@@ -352,6 +432,20 @@ export interface PortfolioSettings {
   featured: string[];
   show_metrics: boolean;
   contact_email: string | null;
+  /** More emails, phone numbers and WhatsApp numbers shown on the portfolio. */
+  contacts: ContactItem[];
+  /** Social profiles (just the handle; the link is built from the platform). */
+  socials: SocialLink[];
+}
+
+export interface ContactItem {
+  kind: "email" | "phone" | "whatsapp";
+  value: string;
+  label: string | null;
+}
+export interface SocialLink {
+  platform: "instagram" | "tiktok" | "github" | "facebook" | "snapchat" | "threads" | "x" | "telegram" | "linkedin";
+  handle: string;
 }
 
 export const fetchPortfolio = () => request<PortfolioSettings>("/me/portfolio");
@@ -910,7 +1004,7 @@ export interface TrafficStats {
 export const fetchSystemHealth = () => request<SystemHealth>("/admin/system/health");
 
 export type BroadcastChannel = "in_app" | "sms" | "email";
-export type BroadcastSegment = "all" | "active" | "unactivated";
+export type BroadcastSegment = "all" | "active" | "unactivated" | "selected";
 export interface BroadcastContact {
   name: string;
   username: string;
@@ -925,24 +1019,55 @@ export interface BroadcastRow {
   subject: string;
   body: string;
   recipients: number;
-  delivery: "delivered" | "manual" | "sent";
+  /** delivered = in-app; sending/sent/partial/failed = email sent by the server; manual = SMS or email sent by hand. */
+  delivery: "delivered" | "manual" | "sending" | "sent" | "partial" | "failed";
   sent_by: string | null;
   created_at: string;
+  /** In-app messages are tracked per person; SMS and email are sent by hand and can't be. */
+  tracked: boolean;
+  delivered_count: number;
+  read_count: number;
+  /** Emails that couldn't be delivered. */
+  failed: number;
+}
+export interface BroadcastPerson {
+  id: string;
+  name: string;
+  username: string;
+  status: "sent" | "delivered" | "read";
+  delivered_at: string | null;
+  read_at: string | null;
+}
+export interface BroadcastReport {
+  tracked: boolean;
+  channel: BroadcastChannel;
+  total?: number;
+  delivered?: number;
+  read?: number;
+  recipients: BroadcastPerson[];
+}
+export interface MemberPick {
+  id: string;
+  name: string;
+  username: string;
+  email: string;
 }
 
-export const previewBroadcast = (channel: BroadcastChannel, segment: BroadcastSegment) =>
+export const previewBroadcast = (channel: BroadcastChannel, segment: BroadcastSegment, userIds: string[] = []) =>
   request<{ count: number; sample: BroadcastContact[] }>("/admin/broadcasts/preview", {
     method: "POST",
-    body: JSON.stringify({ channel, segment }),
+    body: JSON.stringify({ channel, segment, user_ids: userIds }),
   });
-export const sendBroadcast = (payload: { channel: BroadcastChannel; segment: BroadcastSegment; subject: string; body: string }) =>
+export const sendBroadcast = (payload: { channel: BroadcastChannel; segment: BroadcastSegment; subject: string; body: string; user_ids?: string[] }) =>
   request<{ id: string; delivery: string; recipients: number; contacts: BroadcastContact[] }>("/admin/broadcasts", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 export const fetchBroadcasts = () => request<BroadcastRow[]>("/admin/broadcasts");
-export const fetchBroadcastContacts = (segment: BroadcastSegment, channel: BroadcastChannel) =>
-  request<BroadcastContact[]>(`/admin/broadcasts/${segment}/${channel}/contacts`);
+export const fetchBroadcastCapabilities = () => request<{ email: boolean }>("/admin/broadcasts/capabilities");
+export const fetchBroadcastContacts = (id: string) => request<BroadcastContact[]>(`/admin/broadcasts/${id}/contacts`);
+export const fetchBroadcastReport = (id: string) => request<BroadcastReport>(`/admin/broadcasts/${id}/report`);
+export const searchMembers = (q: string) => request<MemberPick[]>(`/admin/broadcasts/people?q=${encodeURIComponent(q)}`);
 
 export interface ChatContactItem {
   id: string;
@@ -994,6 +1119,7 @@ export interface GroupDetail {
   name: string;
   topic: string;
   slug: string;
+  avatar: string | null;
   my_role: "admin" | "member";
   my_status: "member" | "invited";
   members: GroupMember[];
@@ -1003,6 +1129,14 @@ export const fetchChatGroups = () => request<ChatGroupItem[]>("/chat/groups");
 export const createChatGroup = (name: string, topic: string, memberIds: string[]) =>
   request<ChatGroupItem>("/chat/groups", { method: "POST", body: JSON.stringify({ name, topic, member_ids: memberIds }) });
 export const fetchGroupDetail = (id: string) => request<GroupDetail>(`/chat/groups/${id}`);
+// Group admins: rename, description, picture, delete the whole group.
+export const editChatGroup = (id: string, changes: { name?: string; topic?: string }) =>
+  request<ChatGroupItem>(`/chat/groups/${id}`, { method: "PATCH", body: JSON.stringify(changes) });
+export const uploadGroupAvatar = (id: string, file: File) => postFile<ChatGroupItem>(`/chat/groups/${id}/avatar`, file);
+export const removeGroupAvatar = (id: string) => request<ChatGroupItem>(`/chat/groups/${id}/avatar`, { method: "DELETE" });
+export const deleteChatGroup = (id: string) => request<void>(`/chat/groups/${id}`, { method: "DELETE" });
+/** "Delete chat": clears this conversation for me only (1:1 or group); the others keep theirs. */
+export const clearChat = (topic: string) => request<void>("/chat/clear", { method: "POST", body: JSON.stringify({ topic }) });
 export const acceptGroupInvite = (id: string) =>
   request<{ slug: string; topic: string; group: ChatGroupItem }>(`/chat/groups/${id}/accept`, { method: "POST" });
 export const declineGroupInvite = (id: string) => request<void>(`/chat/groups/${id}/decline`, { method: "POST" });
@@ -1092,15 +1226,21 @@ export interface GuestSupportResponse {
   guest_id: string;
   session_id: string;
   name: string;
+  /** What to call them: the name they gave (null if none). */
+  display_name: string | null;
+  handle: string;
+  returning: boolean;
+  visits: number;
+  last_visit: string | null;
   username: string;
   token: string;
   agent: SupportAgent;
 }
 
-export const initGuestSupport = (sessionId: string, displayName?: string) =>
+export const initGuestSupport = (sessionId: string, displayName?: string, email?: string) =>
   request<GuestSupportResponse>("/support/guest/init", {
     method: "POST",
-    body: JSON.stringify({ session_id: sessionId, display_name: displayName }),
+    body: JSON.stringify({ session_id: sessionId, display_name: displayName || undefined, email: email || undefined }),
   });
 
 // ---------- Curriculum Vitae (backend app/api/cv.py) ----------
@@ -1148,3 +1288,115 @@ export const removeCvSignature = () => request<void>("/me/cv/signature", { metho
 export const shareMyCv = () => request<{ share_token: string }>("/me/cv/share", { method: "POST" });
 export const stopSharingCv = () => request<void>("/me/cv/share", { method: "DELETE" });
 export const fetchSharedCv = (token: string) => request<Cv>(`/cv/shared/${encodeURIComponent(token)}`);
+
+/** Admin: remove one code from the list. */
+export const deleteAdminOtp = (id: string) => request<void>(`/admin/otps/${id}`, { method: "DELETE" });
+/** Admin: empty the list ("finished" = used and expired codes only). */
+export const clearAdminOtps = (scope: "finished" | "all") => request<{ removed: number }>(`/admin/otps/clear?scope=${scope}`, { method: "POST" });
+
+// ---- engagement: stars, comments, CV requests, visitor messages ----
+
+export type EngageKind = "profile" | "work";
+export interface EngagePerson {
+  name: string;
+  username: string | null;
+  avatar: string | null;
+}
+export interface EngageComment {
+  id: string;
+  body: string;
+  created_at: string;
+  author: EngagePerson;
+  mine: boolean;
+  can_delete: boolean;
+}
+export interface EngageStatus {
+  likes: number;
+  /** Who starred it (the latest 24). */
+  stars: EngagePerson[];
+  liked: boolean;
+  signed_in: boolean;
+  self: boolean;
+  comment_count: number;
+  comments: EngageComment[];
+}
+export const engageStatus = (kind: EngageKind, key: string) => request<EngageStatus>(`/engage/${kind}/${encodeURIComponent(key)}`);
+export const setLike = (kind: EngageKind, key: string, on: boolean) =>
+  request<void>(`/engage/${kind}/${encodeURIComponent(key)}/like`, { method: on ? "PUT" : "DELETE" });
+export const addComment = (kind: EngageKind, key: string, body: string) =>
+  request<EngageComment>(`/engage/${kind}/${encodeURIComponent(key)}/comments`, { method: "POST", body: JSON.stringify({ body }) });
+export const deleteComment = (id: string) => request<void>(`/engage/comments/${id}`, { method: "DELETE" });
+
+export interface AskPayload {
+  name?: string;
+  email?: string;
+  message?: string;
+  website?: string;
+}
+export const askForCv = (username: string, payload: AskPayload) =>
+  request<{ ok: boolean }>(`/u/${encodeURIComponent(username)}/cv-request`, { method: "POST", body: JSON.stringify(payload) });
+export const leaveVisitorMessage = (username: string, payload: AskPayload) =>
+  request<{ ok: boolean }>(`/u/${encodeURIComponent(username)}/message`, { method: "POST", body: JSON.stringify(payload) });
+
+export interface CvRequestItem {
+  id: string;
+  name: string;
+  email: string | null;
+  message: string | null;
+  status: "pending" | "sent" | "declined";
+  created_at: string;
+  member_username: string | null;
+  cv_ready: boolean;
+}
+export const fetchCvRequests = () => request<CvRequestItem[]>("/me/cv-requests");
+export const sendCvRequest = (id: string) => request<{ status: string; link: string; emailed: boolean | null }>(`/me/cv-requests/${id}/send`, { method: "POST" });
+export const declineCvRequest = (id: string) => request<{ status: string }>(`/me/cv-requests/${id}/decline`, { method: "POST" });
+export const deleteCvRequest = (id: string) => request<void>(`/me/cv-requests/${id}`, { method: "DELETE" });
+
+export interface VisitorMessageItem {
+  id: string;
+  name: string;
+  email: string | null;
+  body: string;
+  created_at: string;
+  read: boolean;
+}
+export const fetchVisitorMessages = () => request<VisitorMessageItem[]>("/me/visitor-messages");
+export const readVisitorMessage = (id: string) => request<void>(`/me/visitor-messages/${id}/read`, { method: "POST" });
+export const deleteVisitorMessage = (id: string) => request<void>(`/me/visitor-messages/${id}`, { method: "DELETE" });
+
+export interface EngagedPerson extends EngagePerson {
+  at: string;
+}
+export interface EngagedComment extends EngagePerson {
+  id: string;
+  body: string;
+  at: string;
+}
+export interface Engagement {
+  totals: {
+    followers: number;
+    profile_likes: number;
+    profile_comments: number;
+    work_likes: number;
+    work_comments: number;
+    watchers: number;
+    cv_pending: number;
+    messages_unread: number;
+  };
+  profile: { likes: EngagedPerson[]; comments: EngagedComment[] };
+  followers: EngagedPerson[];
+  works: {
+    id: string;
+    title: string;
+    work_type: string;
+    visibility: string;
+    likes: EngagedPerson[];
+    like_count: number;
+    comments: EngagedComment[];
+    comment_count: number;
+    watchers: EngagedPerson[];
+    watcher_count: number;
+  }[];
+}
+export const fetchEngagement = () => request<Engagement>("/me/engagement");

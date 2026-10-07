@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useChatInbox } from "@/components/chat/ChatNotifier";
 import { useCall } from "@/components/chat/CallOverlay";
 import { startCall } from "@/lib/calls";
+import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { AttachmentView, ContactInfoPanel, UserAvatar } from "@/components/chat/ChatBits";
 import {
+  ChevronDown,
   MessageSquare,
   Users,
   Search,
@@ -31,6 +33,10 @@ import {
   UserPlus,
   Info,
   Reply,
+  Pencil,
+  Trash2,
+  Ban,
+  Camera,
 } from "lucide-react";
 import {
   User,
@@ -47,6 +53,11 @@ import {
   type GroupDetail,
   type ChatAttachment,
   uploadChatAttachment,
+  editChatGroup,
+  uploadGroupAvatar,
+  removeGroupAvatar,
+  deleteChatGroup,
+  clearChat,
 } from "@/lib/api";
 
 function formatChatTime(dateStr?: string): string {
@@ -85,6 +96,8 @@ import {
   sendChannelMessage,
   sendChannelTyping,
   sendChannelReaction,
+  sendEditMessage,
+  sendDeleteMessage,
   sendChannelReadReceipt,
   mergeMessages,
   loadOlder,
@@ -117,6 +130,7 @@ const groupToContact = (g: ChatGroupItem): ChatContact => ({
   username: g.username,
   role: g.role,
   type: "group",
+  avatar: g.avatar ?? undefined,
   roomId: g.roomId,
   isOnline: false,
   membersCount: g.membersCount,
@@ -146,7 +160,7 @@ const errText = (e: unknown, fallback: string) => (e instanceof Error && e.messa
 // Real contacts are loaded from /chat/contacts directly from PostgreSQL
 const INITIAL_CONTACTS: ChatContact[] = [];
 
-const COMMON_EMOJIS = ["❤️", "👍", "🔥", "🚀", "😂", "👏", "🎉", "💯", "🙏", "⚡"];
+const EDIT_WINDOW_MS = 3600 * 1000; // the server lets the author fix a message for an hour
 
 const TYPING_SEND_EVERY = 2000; // ms between "still typing" pings while keys are pressed
 const TYPING_IDLE = 3000; // send "stopped typing" after this long without a key
@@ -204,6 +218,25 @@ export function RealtimeChatView({ user }: { user: User }) {
   const [chatError, setChatError] = useState<string | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [replyMessage, setReplyMessage] = useState<ChatMessage | null>(null);
+  // Fixing / taking back messages, and the emoji picker on a message's reactions.
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [menuMsgId, setMenuMsgId] = useState<string | null>(null);
+  const [reactPickerId, setReactPickerId] = useState<string | null>(null);
+  const [msgNotice, setMsgNotice] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(0); // 0 until the first tick: the server decides anyway
+  useEffect(() => {
+    const first = setTimeout(() => setNowMs(Date.now()), 0);
+    const tick = setInterval(() => setNowMs(Date.now()), 30000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(tick);
+    };
+  }, []);
+  // Group admin: name / description being edited in the members panel.
+  const [gName, setGName] = useState("");
+  const [gTopic, setGTopic] = useState("");
+  const [gBusy, setGBusy] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   // New Chat Modals & Member Discovery
   const [showNewDmModal, setShowNewDmModal] = useState(false);
@@ -241,6 +274,16 @@ export function RealtimeChatView({ user }: { user: User }) {
   const channelRef = useRef<Channel | null>(null);
   const topicRef = useRef("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Reading position (WhatsApp-style history): open at the newest message, load older pages as the reader
+  // scrolls up without moving what they're looking at, and only follow new messages when already at the bottom.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+  const anchorRef = useRef<{ height: number; top: number } | null>(null); // measured just before older messages are added
+  const openedRef = useRef(""); // the conversation whose newest messages have been shown at the bottom
+  const loadingOlderRef = useRef(false);
+  const hasOlderRef = useRef(false);
+  const loadOlderRef = useRef<() => void>(() => {});
+  const [away, setAway] = useState(false); // scrolled up, away from the newest message
   const typingSentAt = useRef(0);
   const typingIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
@@ -374,7 +417,11 @@ export function RealtimeChatView({ user }: { user: User }) {
 
   const loadGroupInfo = useCallback((id: string) => {
     return fetchGroupDetail(id)
-      .then(setGroupInfo)
+      .then((d) => {
+        setGroupInfo(d);
+        setGName(d.name);
+        setGTopic(d.topic ?? "");
+      })
       .catch(() => setGroupInfo(null));
   }, []);
 
@@ -462,11 +509,65 @@ export function RealtimeChatView({ user }: { user: User }) {
     }
   };
 
-  // Follow the newest message (not when older pages are prepended).
+  // Runs before the browser paints, so there is never a visible jump.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (anchorRef.current) {
+      // Older messages were added above: keep what the reader was looking at exactly where it was.
+      el.scrollTop = el.scrollHeight - anchorRef.current.height + anchorRef.current.top;
+      anchorRef.current = null;
+      return;
+    }
+    const topic = topicRef.current;
+    if (topic && openedRef.current !== topic && messages.some((m) => m.seq)) {
+      // First time this conversation shows its stored messages: open at the newest, instantly (no sweep from the top).
+      el.scrollTop = el.scrollHeight;
+      openedRef.current = topic;
+      nearBottomRef.current = true;
+    }
+  }, [messages]);
+
+  // A new message at the bottom: follow it when the reader is already there (or sent it), otherwise leave them reading.
   const newestKey = messages.at(-1)?.client_id;
+  const newestIsMine = messages.at(-1)?.author_id === me;
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [newestKey, typingUsers]);
+    const el = scrollRef.current;
+    if (!el || !newestKey) return;
+    if (nearBottomRef.current || newestIsMine) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [newestKey, newestIsMine]);
+
+  // Someone typing shows under the last message: keep it in view only for a reader at the bottom.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && nearBottomRef.current) el.scrollTo({ top: el.scrollHeight });
+  }, [typingUsers]);
+
+  useEffect(() => {
+    hasOlderRef.current = hasOlder;
+  }, [hasOlder]);
+
+  // Stay pinned to the newest message while the reader is at the bottom and the box changes size
+  // (the keyboard opens, a banner appears, the composer grows): the layout settles after the first scroll.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (nearBottomRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [selectedContact?.id]);
+
+  const onStreamScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    nearBottomRef.current = fromBottom < 160;
+    setAway(fromBottom > 400);
+    // Near the top: bring in the next page of older messages.
+    if (el.scrollTop < 240) loadOlderRef.current();
+  };
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -576,6 +677,28 @@ export function RealtimeChatView({ user }: { user: User }) {
     router.replace("/chat");
   }, [wantedTopic, contacts, router, mergeGroups]);
 
+  // /chat?to=<username>: "Message" on someone's portfolio. Open the chat with them, starting a new one if needed.
+  const wantedUser = useSearchParams().get("to");
+  const openedUser = useRef("");
+  useEffect(() => {
+    if (!wantedUser || openedUser.current === wantedUser || loadingContacts) return;
+    openedUser.current = wantedUser;
+    searchChatMembers(wantedUser)
+      .then((found) => {
+        const m = found.find((x) => x.username.toLowerCase() === wantedUser.toLowerCase());
+        if (!m) {
+          setSideNotice("That person can't be messaged here.");
+          return;
+        }
+        const contact = memberToContact(m);
+        setContacts((prev) => (prev.some((c) => c.id === contact.id) ? prev : [contact, ...prev]));
+        setSelectedContact((cur) => cur ?? contact);
+        setShowMobileChat(true);
+      })
+      .catch(() => setSideNotice("Couldn't open that chat."))
+      .finally(() => router.replace("/chat"));
+  }, [wantedUser, loadingContacts, router]);
+
   // Send (or resend) one message. Same client_id = stored once, so retrying is always safe.
   const deliver = useCallback((msg: ChatMessage) => {
     const chan = channelRef.current;
@@ -586,7 +709,14 @@ export function RealtimeChatView({ user }: { user: User }) {
     mark("sending");
     sendChannelMessage(chan, msg)
       .then((stored) => topicRef.current === topic && setMessages((prev) => mergeMessages(prev, [stored])))
-      .catch(() => topicRef.current === topic && mark("failed"));
+      .catch((e) => {
+        if (topicRef.current !== topic) return;
+        // Refused for good (an account that is not activated used its free messages): not "tap to retry".
+        if (e instanceof Error && /activate your account|suspended/i.test(e.message)) {
+          setMessages((prev) => prev.filter((m) => !(m.client_id === msg.client_id && !m.seq)));
+          setChatError(e.message);
+        } else mark("failed");
+      });
   }, []);
 
   // Join the selected conversation
@@ -653,7 +783,8 @@ export function RealtimeChatView({ user }: { user: User }) {
         ),
       onReaction: (r) =>
         live() && setMessages((prev) => prev.map((m) => (m.id === r.message_id ? withReaction(m, r.emoji, r.user_id, false) : m))),
-      onDeleted: ({ id }) => live() && setMessages((prev) => prev.filter((m) => m.id !== id)),
+      onDeleted: (m) => live() && setMessages((prev) => mergeMessages(prev, [m])),
+      onEdited: (m) => live() && setMessages((prev) => mergeMessages(prev, [m])),
       onJoinError: (reason) => live() && setChatError(`Can't open this chat: ${reason}`),
       onRemoved: () => live() && removedFromGroup(selectedContact),
     });
@@ -776,25 +907,124 @@ export function RealtimeChatView({ user }: { user: User }) {
 
   const handleLoadOlder = async () => {
     const chan = channelRef.current;
-    const oldest = messages.find((m) => m.seq)?.seq;
-    if (!chan || !oldest) return;
+    const oldest = messagesRef.current.find((m) => m.seq)?.seq;
+    if (!chan || !oldest || loadingOlderRef.current || !hasOlderRef.current) return;
     const topic = topicRef.current;
+    loadingOlderRef.current = true;
     setLoadingOlder(true);
     try {
       const page = await loadOlder(chan, oldest);
       if (topicRef.current !== topic) return;
+      const el = scrollRef.current;
+      // Measured now, just before the older messages go in (the layout effect restores the position).
+      if (el && page.messages.length) anchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
       setMessages((prev) => mergeMessages(prev, page.messages));
       setHasOlder(page.has_more);
     } catch {
       setChatError("Couldn't load older messages. Try again.");
     } finally {
+      loadingOlderRef.current = false;
       setLoadingOlder(false);
     }
   };
+  useEffect(() => {
+    loadOlderRef.current = handleLoadOlder;
+  });
 
   const handleAddReaction = (messageId: string, emoji: string) => {
     setMessages((prev) => prev.map((m) => (m.id === messageId ? withReaction(m, emoji, me, true) : m)));
     if (channelRef.current) sendChannelReaction(channelRef.current, messageId, emoji);
+  };
+
+  const startEdit = (msg: ChatMessage) => {
+    setMenuMsgId(null);
+    setEditing({ id: msg.id, text: msg.text });
+  };
+  const saveEdit = async () => {
+    const chan = channelRef.current;
+    if (!editing || !chan) return;
+    const text = editing.text.trim();
+    const original = messagesRef.current.find((m) => m.id === editing.id);
+    if (!text || text === original?.text) {
+      setEditing(null);
+      return;
+    }
+    try {
+      const saved = await sendEditMessage(chan, editing.id, text);
+      setMessages((prev) => mergeMessages(prev, [saved]));
+      setEditing(null);
+    } catch (e) {
+      setMsgNotice(errText(e, "Could not save the change."));
+    }
+  };
+  const deleteMessage = async (msg: ChatMessage) => {
+    setMenuMsgId(null);
+    const chan = channelRef.current;
+    if (!chan || !window.confirm("Delete this message for everyone?")) return;
+    try {
+      const gone = await sendDeleteMessage(chan, msg.id);
+      setMessages((prev) => mergeMessages(prev, [gone]));
+    } catch (e) {
+      setMsgNotice(errText(e, "Could not delete the message."));
+    }
+  };
+
+  // "Delete chat": clears my copy of this conversation (1:1 or group); the others keep theirs.
+  const handleDeleteChat = async () => {
+    if (!selectedContact) return;
+    setShowChatMenu(false);
+    const what = selectedContact.type === "group" ? "this group's messages" : "this chat";
+    if (!window.confirm(`Delete ${what} for you? The other people keep their copy${selectedContact.type === "group" ? " and you stay in the group" : ""}.`)) return;
+    try {
+      await clearChat(topicOf(selectedContact));
+      setMessages([]);
+      setHasOlder(false);
+      setContacts((prev) =>
+        prev.map((c) => (c.id === selectedContact.id ? { ...c, lastMessage: undefined, lastMessageTime: undefined, unreadCount: 0 } : c))
+      );
+    } catch (e) {
+      setMsgNotice(errText(e, "Could not delete the chat."));
+    }
+  };
+
+  // Group admin: rename, description, picture, delete the group for everyone.
+  const handleSaveGroupDetails = async () => {
+    if (!selectedContact || !groupInfo) return;
+    const name = gName.trim();
+    if (name.length < 2) {
+      setGroupNotice("The group needs a name.");
+      return;
+    }
+    setGBusy(true);
+    await groupAction(() => editChatGroup(selectedContact.id, { name, topic: gTopic.trim() }), "Saved.");
+    setGBusy(false);
+  };
+  const handleGroupPicture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !selectedContact) return;
+    setGBusy(true);
+    await groupAction(() => uploadGroupAvatar(selectedContact.id, file), "Group picture updated.");
+    setGBusy(false);
+  };
+  const handleRemoveGroupPicture = async () => {
+    if (!selectedContact) return;
+    setGBusy(true);
+    await groupAction(() => removeGroupAvatar(selectedContact.id), "Group picture removed.");
+    setGBusy(false);
+  };
+  const handleDeleteGroup = async () => {
+    if (!selectedContact || !window.confirm(`Delete "${selectedContact.name}" for everyone? Its messages are removed for all members.`)) return;
+    try {
+      await deleteChatGroup(selectedContact.id);
+      setContacts((prev) => prev.filter((c) => c.id !== selectedContact.id));
+      setSelectedContact(null);
+      setShowMobileChat(false);
+      setShowChatMenu(false);
+      closeGroupInfo();
+    } catch (e) {
+      setGroupNotice(errText(e, "Could not delete the group."));
+    }
   };
 
   const handleCreateGroup = async (e: React.FormEvent) => {
@@ -1106,12 +1336,12 @@ export function RealtimeChatView({ user }: { user: User }) {
                   title={selectedContact.type === "group" ? "Group members" : "Contact info"}
                   className="relative cursor-pointer"
                 >
-                  {selectedContact.type === "group" ? (
+                  {selectedContact.type === "group" && !liveSelected?.avatar ? (
                     <div className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-xs bg-purple-500/10 text-purple-600 border border-purple-500/20">
                       <Users className="w-5 h-5" />
                     </div>
                   ) : (
-                    <UserAvatar name={selectedContact.name} src={selectedContact.avatar} className="w-10 h-10 rounded-2xl text-sm shadow-xs" />
+                    <UserAvatar name={liveSelected?.name ?? selectedContact.name} src={liveSelected?.avatar ?? selectedContact.avatar} className="w-10 h-10 rounded-2xl text-sm shadow-xs" />
                   )}
                   {peerOnline && (
                     <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-paper" />
@@ -1120,7 +1350,7 @@ export function RealtimeChatView({ user }: { user: User }) {
 
                 <div className="min-w-0">
                   <h3 className="text-sm font-bold text-ink-900 truncate flex items-center gap-2">
-                    {selectedContact.name}
+                    {liveSelected?.name ?? selectedContact.name}
                     {selectedContact.type === "group" && (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-600 border border-purple-500/20">
                         Group Channel
@@ -1192,6 +1422,9 @@ export function RealtimeChatView({ user }: { user: User }) {
                             <MenuItem icon={LogOut} danger onClick={handleLeaveGroup}>
                               Leave group
                             </MenuItem>
+                            <MenuItem icon={Trash2} danger onClick={handleDeleteChat}>
+                              Delete chat
+                            </MenuItem>
                           </>
                         ) : (
                           <>
@@ -1213,6 +1446,9 @@ export function RealtimeChatView({ user }: { user: User }) {
                             >
                               View full profile
                             </MenuItem>
+                            <MenuItem icon={Trash2} danger onClick={handleDeleteChat}>
+                              Delete chat
+                            </MenuItem>
                           </>
                         )}
                       </div>
@@ -1223,7 +1459,7 @@ export function RealtimeChatView({ user }: { user: User }) {
             </div>
 
             {/* Messages Stream (WhatsApp Wallpaper Background) */}
-            <div className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-4 bg-radial from-paper-dim/60 to-paper-dim/20">
+            <div ref={scrollRef} onScroll={onStreamScroll} onLoadCapture={() => nearBottomRef.current && scrollRef.current && (scrollRef.current.scrollTop = scrollRef.current.scrollHeight)} style={{ overflowAnchor: "none" }} className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-4 bg-radial from-paper-dim/60 to-paper-dim/20">
               {/* Channel Banner */}
               <div className="text-center my-3">
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold bg-paper border border-hairline text-slate shadow-2xs">
@@ -1238,6 +1474,17 @@ export function RealtimeChatView({ user }: { user: User }) {
                 </div>
               )}
 
+              {msgNotice && (
+                <button
+                  type="button"
+                  onClick={() => setMsgNotice(null)}
+                  role="alert"
+                  className="mx-auto block max-w-md rounded-xl border border-berry/30 bg-berry/10 px-3 py-2 text-center text-xs font-semibold text-berry cursor-pointer"
+                >
+                  {msgNotice}
+                </button>
+              )}
+
               {hasOlder && (
                 <div className="text-center">
                   <button
@@ -1246,7 +1493,7 @@ export function RealtimeChatView({ user }: { user: User }) {
                     disabled={loadingOlder}
                     className="px-3 py-1.5 rounded-full text-[11px] font-semibold border border-hairline bg-paper text-slate hover:text-ink disabled:opacity-50 cursor-pointer"
                   >
-                    {loadingOlder ? "Loading…" : "Load older messages"}
+                    {loadingOlder ? "Loading earlier messages…" : "Load older messages"}
                   </button>
                 </div>
               )}
@@ -1257,6 +1504,10 @@ export function RealtimeChatView({ user }: { user: User }) {
                 const prev = messages[i - 1];
                 const groupOther = !isMe && selectedContact.type === "group";
                 const firstOfRun = !prev || prev.author_id !== msg.author_id || isSystem(prev);
+                const gone = !!msg.deleted_at;
+                const isEditing = editing?.id === msg.id;
+                const canEdit = isMe && !gone && !!msg.seq && !!msg.text && (!nowMs || nowMs - new Date(msg.timestamp).getTime() < EDIT_WINDOW_MS);
+                const canDelete = !gone && !!msg.seq && (isMe || (selectedContact.type === "group" && liveSelected?.myRole === "admin"));
                 if (isSystem(msg)) {
                   return (
                     <div key={msg.client_id || msg.id} className="flex justify-center">
@@ -1311,12 +1562,47 @@ export function RealtimeChatView({ user }: { user: User }) {
                           </button>
                         )}
 
-                        {msg.attachment && <AttachmentView att={msg.attachment} mine={isMe} />}
-
-                        {msg.text && (
-                          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words font-medium">
-                            {msg.text}
+                        {gone ? (
+                          <p className="text-sm italic flex items-center gap-1.5 opacity-80">
+                            <Ban className="w-3.5 h-3.5 shrink-0" /> This message was deleted
                           </p>
+                        ) : (
+                          <>
+                            {msg.attachment && <AttachmentView att={msg.attachment} mine={isMe} />}
+
+                            {isEditing ? (
+                              <div className="flex flex-col gap-2 min-w-[12rem]">
+                                <input
+                                  autoFocus
+                                  value={editing.text}
+                                  onChange={(e) => setEditing({ id: msg.id, text: e.target.value })}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      saveEdit();
+                                    } else if (e.key === "Escape") setEditing(null);
+                                  }}
+                                  maxLength={4000}
+                                  aria-label="Edit message"
+                                  className="w-full rounded-lg bg-white/95 px-2.5 py-1.5 text-sm text-ink-900 focus:outline-none"
+                                />
+                                <div className="flex justify-end gap-2 text-[11px] font-bold">
+                                  <button type="button" onClick={() => setEditing(null)} className="px-2 py-1 rounded-md bg-white/15 hover:bg-white/25 cursor-pointer">
+                                    Cancel
+                                  </button>
+                                  <button type="button" onClick={saveEdit} className="px-2 py-1 rounded-md bg-white text-emerald-700 hover:bg-emerald-50 cursor-pointer">
+                                    Save
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              msg.text && (
+                                <p className="text-sm leading-relaxed whitespace-pre-wrap break-words font-medium">
+                                  {msg.text}
+                                </p>
+                              )
+                            )}
+                          </>
                         )}
 
                         {/* Metadata & Status Ticks */}
@@ -1324,6 +1610,7 @@ export function RealtimeChatView({ user }: { user: User }) {
                           className={`flex items-center justify-end gap-1.5 mt-1 text-[10px] ${isMe ? "text-emerald-100" : "text-slate"
                             }`}
                         >
+                          {msg.edited_at && !gone && <span className="italic">edited</span>}
                           <span>
                             {new Date(msg.timestamp).toLocaleTimeString([], {
                               hour: "2-digit",
@@ -1347,7 +1634,7 @@ export function RealtimeChatView({ user }: { user: User }) {
                       </div>
 
                       {/* Reply to this message: always visible on touch screens, on hover with a mouse */}
-                      {msg.seq && (
+                      {msg.seq && !gone && (
                         <button
                           type="button"
                           onClick={() => startReply(msg)}
@@ -1357,6 +1644,38 @@ export function RealtimeChatView({ user }: { user: User }) {
                         >
                           <Reply className="w-3.5 h-3.5" />
                         </button>
+                      )}
+
+                      {(canEdit || canDelete) && (
+                        <div className={`absolute top-11 ${isMe ? "-left-9" : "-right-9"}`}>
+                          <button
+                            type="button"
+                            onClick={() => setMenuMsgId(menuMsgId === msg.id ? null : msg.id)}
+                            aria-label="Message options"
+                            aria-expanded={menuMsgId === msg.id}
+                            title="Edit or delete"
+                            className="p-1.5 rounded-full bg-paper border border-hairline text-slate shadow-xs hover:text-ink cursor-pointer transition-opacity opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
+                          >
+                            <MoreVertical className="w-3.5 h-3.5" />
+                          </button>
+                          {menuMsgId === msg.id && (
+                            <>
+                              <div className="fixed inset-0 z-20" onClick={() => setMenuMsgId(null)} />
+                              <div role="menu" className={`absolute top-8 z-30 w-40 overflow-hidden rounded-xl border border-hairline bg-paper py-1 shadow-xl ${isMe ? "left-0" : "right-0"}`}>
+                                {canEdit && (
+                                  <MenuItem icon={Pencil} onClick={() => startEdit(msg)}>
+                                    Edit
+                                  </MenuItem>
+                                )}
+                                {canDelete && (
+                                  <MenuItem icon={Trash2} danger onClick={() => deleteMessage(msg)}>
+                                    Delete
+                                  </MenuItem>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </div>
                       )}
 
                       {isMe && msg.status === "failed" && (
@@ -1370,7 +1689,7 @@ export function RealtimeChatView({ user }: { user: User }) {
                       )}
 
                       {/* Reactions Badge */}
-                      {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                      {!gone && msg.reactions && Object.keys(msg.reactions).length > 0 && (
                         <div className="flex gap-1 mt-1 -mb-2 z-10 relative">
                           {Object.entries(msg.reactions).map(([emoji, users]) =>
                             users.length > 0 ? (
@@ -1389,8 +1708,9 @@ export function RealtimeChatView({ user }: { user: User }) {
                       )}
 
                       {/* Quick Reaction Hover Menu */}
+                      {!gone && !!msg.seq && (
                       <div
-                        className={`absolute -top-7 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 p-1 rounded-full bg-paper border border-hairline shadow-md z-20 ${isMe ? "right-0" : "left-0"
+                        className={`absolute -top-7 ${reactPickerId === msg.id ? "opacity-100" : "opacity-0"} group-hover:opacity-100 transition-opacity flex items-center gap-1 p-1 rounded-full bg-paper border border-hairline shadow-md z-20 ${isMe ? "right-0" : "left-0"
                           }`}
                       >
                         {["❤️", "👍", "🔥", "😂"].map((emoji) => (
@@ -1405,18 +1725,54 @@ export function RealtimeChatView({ user }: { user: User }) {
                         ))}
                         <button
                           type="button"
+                          onClick={() => setReactPickerId(reactPickerId === msg.id ? null : msg.id)}
+                          aria-label="More reactions"
+                          title="More reactions"
+                          className="w-6 h-6 rounded-full text-slate hover:text-ink hover:bg-paper-dim flex items-center justify-center cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => startReply(msg)}
                           className="px-1.5 py-0.5 text-[10px] font-bold text-slate hover:text-ink cursor-pointer"
                         >
                           Reply
                         </button>
+                        {reactPickerId === msg.id && (
+                          <>
+                            <div className="fixed inset-0 z-20" onClick={() => setReactPickerId(null)} />
+                            <div className={`absolute bottom-9 z-30 ${isMe ? "right-0" : "left-0"}`}>
+                              <EmojiPicker
+                                compact
+                                onPick={(emoji) => {
+                                  handleAddReaction(msg.id, emoji);
+                                  setReactPickerId(null);
+                                }}
+                              />
+                            </div>
+                          </>
+                        )}
                       </div>
+                      )}
                     </div>
                   </div>
                 );
               })}
 
               <div ref={messagesEndRef} />
+              {away && (
+                <div className="sticky bottom-2 h-0 overflow-visible">
+                  <button
+                    type="button"
+                    onClick={() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })}
+                    aria-label="Jump to the latest message"
+                    className="absolute bottom-0 right-0 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-hairline bg-paper text-ink-700 shadow-lg transition-colors hover:bg-paper-dim"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Live Typing Bar */}
@@ -1479,22 +1835,15 @@ export function RealtimeChatView({ user }: { user: User }) {
               </div>
             )}
 
-            {/* Emoji Selector Tray */}
+            {/* Emoji picker: categories, search and recently used */}
             {showEmojiPicker && (
-              <div className="p-3 border-t border-hairline bg-paper flex items-center gap-2 overflow-x-auto">
-                {COMMON_EMOJIS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    onClick={() => {
-                      setInputText((prev) => prev + emoji);
-                      setShowEmojiPicker(false);
-                    }}
-                    className="w-8 h-8 rounded-lg hover:bg-paper-dim text-lg flex items-center justify-center transition-transform hover:scale-125 cursor-pointer"
-                  >
-                    {emoji}
-                  </button>
-                ))}
+              <div className="border-t border-hairline bg-paper">
+                <EmojiPicker
+                  onPick={(emoji) => {
+                    setInputText((prev) => prev + emoji);
+                    inputRef.current?.focus();
+                  }}
+                />
               </div>
             )}
 
@@ -1834,6 +2183,60 @@ export function RealtimeChatView({ user }: { user: User }) {
               ) : (
                 <>
                   {groupInfo.my_role === "admin" && (
+                    <section className="space-y-3">
+                      <h4 className="text-xs font-bold text-slate uppercase tracking-wide">Group details</h4>
+                      <div className="flex items-center gap-3">
+                        <UserAvatar name={groupInfo.name} src={groupInfo.avatar} className="w-14 h-14 rounded-2xl text-lg" />
+                        <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleGroupPicture} />
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={gBusy}
+                            onClick={() => avatarInputRef.current?.click()}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-hairline px-2.5 py-1.5 text-[11px] font-semibold text-ink-700 hover:bg-paper-dim cursor-pointer disabled:opacity-50"
+                          >
+                            <Camera className="w-3.5 h-3.5" /> {groupInfo.avatar ? "Change picture" : "Add picture"}
+                          </button>
+                          {groupInfo.avatar && (
+                            <button
+                              type="button"
+                              disabled={gBusy}
+                              onClick={handleRemoveGroupPicture}
+                              className="rounded-lg border border-hairline px-2.5 py-1.5 text-[11px] font-semibold text-berry hover:bg-berry/5 cursor-pointer disabled:opacity-50"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <input
+                        value={gName}
+                        onChange={(e) => setGName(e.target.value)}
+                        maxLength={120}
+                        aria-label="Group name"
+                        placeholder="Group name"
+                        className="w-full h-10 px-3 rounded-xl border border-hairline bg-paper-dim text-sm text-ink-900 focus:outline-none focus:border-ink"
+                      />
+                      <input
+                        value={gTopic}
+                        onChange={(e) => setGTopic(e.target.value)}
+                        maxLength={200}
+                        aria-label="Group description"
+                        placeholder="Description (optional)"
+                        className="w-full h-10 px-3 rounded-xl border border-hairline bg-paper-dim text-sm text-ink-900 focus:outline-none focus:border-ink"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSaveGroupDetails}
+                        disabled={gBusy || (gName.trim() === groupInfo.name && gTopic.trim() === (groupInfo.topic ?? ""))}
+                        className="h-9 px-4 rounded-xl bg-ink text-paper text-xs font-semibold disabled:opacity-40 cursor-pointer"
+                      >
+                        Save changes
+                      </button>
+                    </section>
+                  )}
+
+                  {groupInfo.my_role === "admin" && (
                     <section>
                       <h4 className="text-xs font-bold text-slate uppercase tracking-wide mb-2">Add members</h4>
                       <MemberPicker
@@ -1919,6 +2322,15 @@ export function RealtimeChatView({ user }: { user: User }) {
               >
                 <LogOut className="w-4 h-4" /> Leave group
               </button>
+              {groupInfo?.my_role === "admin" && (
+                <button
+                  type="button"
+                  onClick={handleDeleteGroup}
+                  className="mt-2 w-full h-11 rounded-xl bg-berry text-sm font-semibold text-white hover:opacity-90 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete group for everyone
+                </button>
+              )}
             </div>
           </div>
         </div>

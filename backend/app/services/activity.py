@@ -48,9 +48,10 @@ def device_name(ua: str | None) -> str:
     return f"{browser} on {os}" if os else browser
 
 
-def notify(db: AsyncSession, user_id: uuid.UUID, kind: str, title: str, body: str | None = None, link: str | None = None) -> None:
+def notify(db: AsyncSession, user_id: uuid.UUID, kind: str, title: str, body: str | None = None, link: str | None = None,
+           broadcast_id: uuid.UUID | None = None) -> None:
     """Queue a notification for a member. Committed with the change that caused it."""
-    db.add(Notification(user_id=user_id, kind=kind, title=title[:160], body=body, link=link))
+    db.add(Notification(user_id=user_id, kind=kind, title=title[:160], body=body, link=link, broadcast_id=broadcast_id))
 
 
 def record(db: AsyncSession, kind: str, request: Request | None, user_id: uuid.UUID | None = None,

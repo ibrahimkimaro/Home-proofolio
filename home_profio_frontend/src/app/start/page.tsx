@@ -7,11 +7,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   ApiError,
-  createWork,
   registerUser,
   checkUsernameAvailability,
   fetchOnboarding,
-  saveOnboardingAnswers,
   type OnboardingContent,
   type OnboardingQuestion,
   type OnboardingStepKey,
@@ -39,8 +37,13 @@ import {
   Smartphone,
   Eye,
   EyeOff,
+  Headset,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { readAppearance } from "@/lib/appearance";
+import { saveOnboardingData, stashOnboarding } from "@/lib/onboarding-pending";
+import { SupportAssistant } from "@/components/landing/SupportAssistant";
+import { missingDisciplineMessage, openSupport } from "@/lib/support-ui";
 import { resumePending } from "@/lib/pending";
 
 /** Short progress labels per step. Which steps run, and their headings, come from Admin > Onboarding. */
@@ -81,15 +84,15 @@ export default function StartPage() {
     : FALLBACK.categories;
   const roles: RoleOption[] = content
     ? content.roles.map((r) => ({
-        key: r.key,
-        label: r.label,
-        category: r.category_key,
-        workType: r.template,
-        template: r.template,
-        exampleTitle: r.example_title,
-        exampleSkills: r.example_skills,
-        evidenceHint: r.evidence_hint,
-      }))
+      key: r.key,
+      label: r.label,
+      category: r.category_key,
+      workType: r.template,
+      template: r.template,
+      exampleTitle: r.example_title,
+      exampleSkills: r.example_skills,
+      evidenceHint: r.evidence_hint,
+    }))
     : FALLBACK.roles;
   const steps = content?.steps;
   const questions = content?.questions ?? [];
@@ -237,31 +240,31 @@ export default function StartPage() {
 
       // Registration already sent the activation code; the dashboard banner asks for it.
 
-      // Discipline + custom answers feed Admin > Analytics. Never block sign-up on them: the account exists now.
-      await saveOnboardingAnswers({ discipline: content ? role.key : null, answers }).catch(() => {});
-
-      // Save the work they already built during onboarding — only if they actually saw that step.
-      // Onboarding roles map to a Work context template; BR-01 keeps it private until published.
+      // The account exists now: save everything they chose to it. The discipline becomes their headline, the first
+      // work item carries their skills and evidence (private until they publish it, BR-01), and the look they picked
+      // follows them to every device. Each part is retried; anything still failing is kept and saved when the app
+      // opens, so signing up never ends on an error and nothing they chose is lost.
       const LEGACY: Record<string, string> = {
         developer: "developer", designer: "designer", research: "research", business: "business",
         learner: "young_learner", athlete: "sports",
       };
-      if (flow.includes("work")) await createWork({
-        title,
-        work_type: "work",
-        template: role.template ?? LEGACY[role.workType] ?? "other",
-        status: "completed",
-        visibility: "private",
-        skills: skills.split(",").map((s) => s.trim()).filter(Boolean),
-        custom_attributes: {
-          glass_style: glassStyle,
-          accent_tone: accentTone,
-          palette: palette,
-        },
-        evidence_links: evidenceUrl.trim()
-          ? [{ label: "Evidence", url: evidenceUrl.trim() }]
-          : [],
+      const left = await saveOnboardingData({
+        answers: { discipline: content ? role.key : null, answers },
+        work: flow.includes("work")
+          ? {
+              title,
+              work_type: "work",
+              template: role.template ?? LEGACY[role.workType] ?? "other",
+              status: "completed",
+              visibility: "private",
+              skills: skills.split(",").map((s) => s.trim()).filter(Boolean),
+              custom_attributes: { glass_style: glassStyle, accent_tone: accentTone, palette: palette },
+              evidence_links: evidenceUrl.trim() ? [{ label: "Evidence", url: evidenceUrl.trim() }] : [],
+            }
+          : undefined,
+        appearance: readAppearance(),
       });
+      if (left) stashOnboarding(left);
 
       router.push((await resumePending()) ?? "/welcome?new=1");
     } catch (err) {
@@ -299,7 +302,12 @@ export default function StartPage() {
       </header>
 
       <main className="flex flex-1 items-start justify-center px-4 sm:px-5 pb-20 pt-4">
-        <div className="w-full max-w-xl min-w-0">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+          className="w-full max-w-xl min-w-0"
+        >
           {/* Progress deliberately starts above zero — see ProgressBar. */}
           <ProgressBar value={Math.round(((step + 1) / flow.length) * 100)} label={STEP_LABELS[current]} />
 
@@ -316,93 +324,93 @@ export default function StartPage() {
                   <RegistrationClosed message={content.registration.closed_message} />
                 ) : (
                   <>
-                {current === "discipline" && (
-                  <StepRole onChoose={chooseRole} categories={categories} roles={roles} copy={copy("discipline")} loading={!content && !contentFailed} />
-                )}
+                    {current === "discipline" && (
+                      <StepRole onChoose={chooseRole} categories={categories} roles={roles} copy={copy("discipline")} loading={!content && !contentFailed} />
+                    )}
 
-                {current === "work" && role && (
-                  <StepWork
-                    copy={copy("work")}
-                    title={title}
-                    skills={skills}
-                    setTitle={setTitle}
-                    setSkills={setSkills}
-                    onBack={back}
-                    onNext={next}
-                  />
-                )}
+                    {current === "work" && role && (
+                      <StepWork
+                        copy={copy("work")}
+                        title={title}
+                        skills={skills}
+                        setTitle={setTitle}
+                        setSkills={setSkills}
+                        onBack={back}
+                        onNext={next}
+                      />
+                    )}
 
-                {current === "evidence" && role && (
-                  <StepEvidence
-                    copy={copy("evidence")}
-                    hint={role.evidenceHint}
-                    value={evidenceUrl}
-                    setValue={setEvidenceUrl}
-                    onBack={back}
-                    onNext={next}
-                  />
-                )}
+                    {current === "evidence" && role && (
+                      <StepEvidence
+                        copy={copy("evidence")}
+                        hint={role.evidenceHint}
+                        value={evidenceUrl}
+                        setValue={setEvidenceUrl}
+                        onBack={back}
+                        onNext={next}
+                      />
+                    )}
 
-                {current === "questions" && role && (
-                  <StepQuestions
-                    copy={copy("questions")}
-                    questions={questions}
-                    answers={answers}
-                    setAnswers={setAnswers}
-                    onBack={back}
-                    onNext={next}
-                  />
-                )}
+                    {current === "questions" && role && (
+                      <StepQuestions
+                        copy={copy("questions")}
+                        questions={questions}
+                        answers={answers}
+                        setAnswers={setAnswers}
+                        onBack={back}
+                        onNext={next}
+                      />
+                    )}
 
-                {current === "appearance" && role && (
-                  <StepCustomization
-                    copy={copy("appearance")}
-                    title={title}
-                    skills={skills}
-                    roleLabel={role.label}
-                    glassStyle={glassStyle}
-                    setGlassStyle={setGlassStyle}
-                    accentTone={accentTone}
-                    setAccentTone={setAccentTone}
-                    palette={palette}
-                    setPalette={setPalette}
-                    onBack={back}
-                    onNext={next}
-                  />
-                )}
+                    {current === "appearance" && role && (
+                      <StepCustomization
+                        copy={copy("appearance")}
+                        title={title}
+                        skills={skills}
+                        roleLabel={role.label}
+                        glassStyle={glassStyle}
+                        setGlassStyle={setGlassStyle}
+                        accentTone={accentTone}
+                        setAccentTone={setAccentTone}
+                        palette={palette}
+                        setPalette={setPalette}
+                        onBack={back}
+                        onNext={next}
+                      />
+                    )}
 
-                {current === "account" && role && (
-                  <StepKeep
-                    copy={copy("account")}
-                    showEntry={flow.includes("work")}
-                    phoneEnabled={steps?.account?.phone_enabled !== false}
-                    title={title}
-                    skills={skills}
-                    evidenceUrl={evidenceUrl}
-                    glassStyle={glassStyle}
-                    accentTone={accentTone}
-                    displayName={displayName}
-                    username={username}
-                    phoneNumber={phoneNumber}
-                    email={email}
-                    password={password}
-                    usernameStatus={usernameShort ? "idle" : usernameStatus}
-                    usernameMessage={usernameShort ? "" : usernameMessage}
-                    usernameSuggestions={usernameShort ? [] : usernameSuggestions}
-                    setDisplayName={handleDisplayNameChange}
-                    setUsername={setUsername}
-                    setUsernameCustomized={setUsernameCustomized}
-                    setPhoneNumber={setPhoneNumber}
-                    setEmail={setEmail}
-                    setPassword={setPassword}
-                    onCheckUsername={performUsernameCheck}
-                    onSelectSuggestion={handleSelectSuggestion}
-                    error={error}
-                    saving={saving}
-                    onBack={back}
-                    onSubmit={handleFinish}
-                  />
-                )}
+                    {current === "account" && role && (
+                      <StepKeep
+                        copy={copy("account")}
+                        showEntry={flow.includes("work")}
+                        phoneEnabled={steps?.account?.phone_enabled !== false}
+                        title={title}
+                        skills={skills}
+                        evidenceUrl={evidenceUrl}
+                        glassStyle={glassStyle}
+                        accentTone={accentTone}
+                        displayName={displayName}
+                        username={username}
+                        phoneNumber={phoneNumber}
+                        email={email}
+                        password={password}
+                        usernameStatus={usernameShort ? "idle" : usernameStatus}
+                        usernameMessage={usernameShort ? "" : usernameMessage}
+                        usernameSuggestions={usernameShort ? [] : usernameSuggestions}
+                        setDisplayName={handleDisplayNameChange}
+                        setUsername={setUsername}
+                        setUsernameCustomized={setUsernameCustomized}
+                        setPhoneNumber={setPhoneNumber}
+                        setEmail={setEmail}
+                        setPassword={setPassword}
+                        onCheckUsername={performUsernameCheck}
+                        onSelectSuggestion={handleSelectSuggestion}
+                        error={error}
+                        saving={saving}
+                        onBack={back}
+                        onSubmit={handleFinish}
+                      />
+                    )}
                   </>
                 )}
               </motion.div>
@@ -415,8 +423,10 @@ export default function StartPage() {
               Sign in
             </Link>
           </p>
-        </div>
+        </motion.div>
       </main>
+      {/* Live chat with support, available while signing up (guests can chat too). */}
+      <SupportAssistant />
     </div>
   );
 }
@@ -480,11 +490,10 @@ function StepRole({
                 key={cat.key}
                 type="button"
                 onClick={() => setSelectedCat(cat.key)}
-                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all cursor-pointer ${
-                  isActive
-                    ? "bg-ink text-paper shadow-2xs"
-                    : "border border-hairline bg-paper text-slate hover:text-ink-700 hover:border-slate/40"
-                }`}
+                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all cursor-pointer ${isActive
+                  ? "bg-ink text-paper shadow-2xs"
+                  : "border border-hairline bg-paper text-slate hover:text-ink-700 hover:border-slate/40"
+                  }`}
               >
                 {cat.label}
               </button>
@@ -540,11 +549,26 @@ function StepRole({
             ))}
             {filteredRoles.length === 0 && (
               <p className="py-6 text-center text-xs text-slate w-full">
-                No matching role found. Try searching another term or choose &ldquo;General / Multidisciplinary&rdquo;.
+                No matching role found. Try another term, choose &ldquo;General / Multidisciplinary&rdquo;, or ask support to add yours below.
               </p>
             )}
           </div>
         )}
+      </div>
+
+      {/* Not in the list? Chat with support live and ask for it to be added. */}
+      <div className="flex flex-col gap-2 rounded-xl border border-brass/30 bg-brass/10 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-[12px] text-ink-700">
+          <span className="font-semibold">Can&apos;t find your kind of work?</span> Tell support and chat live. We&apos;ll add it.
+        </p>
+        <button
+          type="button"
+          onClick={() => openSupport(missingDisciplineMessage(searchQuery))}
+          className="inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-[12px] font-semibold text-paper transition-opacity hover:opacity-90"
+        >
+          <Headset className="h-3.5 w-3.5 text-brass" />
+          Ask support to add it
+        </button>
       </div>
     </div>
   );
@@ -714,21 +738,21 @@ function StepCustomization({
     try {
       localStorage.setItem("proofolio-theme", p.theme);
       localStorage.setItem("proofolio-palette", p.id);
-    } catch {}
+    } catch { }
   }
 
   function handleSelectGlass(style: GlassStyle) {
     setGlassStyle(style);
     try {
       localStorage.setItem("proofolio-glass-style", style);
-    } catch {}
+    } catch { }
   }
 
   function handleSelectAccent(tone: AccentTone) {
     setAccentTone(tone);
     try {
       localStorage.setItem("proofolio-accent", tone);
-    } catch {}
+    } catch { }
   }
 
   return (
@@ -761,25 +785,23 @@ function StepCustomization({
         </div>
 
         <div
-          className={`p-4 sm:p-5 rounded-2xl transition-all duration-300 ${
-            glassStyle === "liquid"
-              ? "apple-glass-liquid"
-              : glassStyle === "frosted"
+          className={`p-4 sm:p-5 rounded-2xl transition-all duration-300 ${glassStyle === "liquid"
+            ? "apple-glass-liquid"
+            : glassStyle === "frosted"
               ? "apple-glass-frosted"
               : "apple-glass-clean"
-          }`}
+            }`}
         >
           <div className="flex items-center justify-between gap-2 border-b border-hairline/60 pb-2.5 mb-3">
             <span
-              className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${
-                accentTone === "brass"
-                  ? "text-brass-dark"
-                  : accentTone === "emerald"
+              className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${accentTone === "brass"
+                ? "text-brass-dark"
+                : accentTone === "emerald"
                   ? "text-emerald-600"
                   : accentTone === "berry"
-                  ? "text-berry"
-                  : "text-sky-600"
-              }`}
+                    ? "text-berry"
+                    : "text-sky-600"
+                }`}
             >
               <ShieldCheck className="h-3.5 w-3.5" />
               {roleLabel}
@@ -797,15 +819,14 @@ function StepCustomization({
             {displaySkills.map((s) => (
               <span
                 key={s}
-                className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors ${
-                  accentTone === "brass"
-                    ? "border border-brass/40 bg-brass/10 text-brass-dark"
-                    : accentTone === "emerald"
+                className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors ${accentTone === "brass"
+                  ? "border border-brass/40 bg-brass/10 text-brass-dark"
+                  : accentTone === "emerald"
                     ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-700"
                     : accentTone === "berry"
-                    ? "border border-berry/40 bg-berry/10 text-berry"
-                    : "border border-sky-500/40 bg-sky-500/10 text-sky-700"
-                }`}
+                      ? "border border-berry/40 bg-berry/10 text-berry"
+                      : "border border-sky-500/40 bg-sky-500/10 text-sky-700"
+                  }`}
               >
                 {s}
               </span>
@@ -832,11 +853,10 @@ function StepCustomization({
                 key={p.id}
                 type="button"
                 onClick={() => handleSelectPalette(p)}
-                className={`flex items-center gap-2 rounded-xl p-2 text-left border transition-all cursor-pointer ${
-                  isSelected
-                    ? "border-brass bg-paper ring-1 ring-brass/40 shadow-xs"
-                    : "border-hairline bg-paper-dim/40 hover:bg-paper hover:border-slate/40"
-                }`}
+                className={`flex items-center gap-2 rounded-xl p-2 text-left border transition-all cursor-pointer ${isSelected
+                  ? "border-brass bg-paper ring-1 ring-brass/40 shadow-xs"
+                  : "border-hairline bg-paper-dim/40 hover:bg-paper hover:border-slate/40"
+                  }`}
               >
                 <span
                   className="h-4 w-4 rounded-full shrink-0 shadow-2xs"
@@ -875,11 +895,10 @@ function StepCustomization({
                 key={g.id}
                 type="button"
                 onClick={() => handleSelectGlass(g.id)}
-                className={`flex flex-col justify-between rounded-xl p-2.5 sm:p-3 text-left border transition-all cursor-pointer ${
-                  isSelected
-                    ? "border-brass bg-paper ring-1 ring-brass/40 shadow-xs"
-                    : "border-hairline bg-paper-dim/40 hover:bg-paper hover:border-slate/40"
-                }`}
+                className={`flex flex-col justify-between rounded-xl p-2.5 sm:p-3 text-left border transition-all cursor-pointer ${isSelected
+                  ? "border-brass bg-paper ring-1 ring-brass/40 shadow-xs"
+                  : "border-hairline bg-paper-dim/40 hover:bg-paper hover:border-slate/40"
+                  }`}
               >
                 <div className="flex items-center justify-between w-full mb-1">
                   <span className="text-[12px] font-semibold text-ink-700">{g.label}</span>
@@ -908,11 +927,10 @@ function StepCustomization({
                 key={a.id}
                 type="button"
                 onClick={() => handleSelectAccent(a.id)}
-                className={`flex items-center gap-2 rounded-full px-3 py-1.5 border transition-all cursor-pointer ${
-                  isSelected
-                    ? "border-ink-700 bg-paper shadow-2xs font-semibold"
-                    : "border-hairline bg-paper-dim/40 text-slate hover:text-ink-700 hover:border-slate/40"
-                }`}
+                className={`flex items-center gap-2 rounded-full px-3 py-1.5 border transition-all cursor-pointer ${isSelected
+                  ? "border-ink-700 bg-paper shadow-2xs font-semibold"
+                  : "border-hairline bg-paper-dim/40 text-slate hover:text-ink-700 hover:border-slate/40"
+                  }`}
               >
                 <span className={`h-2.5 w-2.5 rounded-full ${a.bgClass}`} />
                 <span className="text-[11px] text-ink-700">{a.label}</span>
@@ -994,56 +1012,53 @@ function StepKeep({
   return (
     <div>
       {showEntry && (
-      <div
-        className={`mb-6 p-4 sm:p-5 rounded-2xl transition-all ${
-          glassStyle === "liquid"
+        <div
+          className={`mb-6 p-4 sm:p-5 rounded-2xl transition-all ${glassStyle === "liquid"
             ? "apple-glass-liquid"
             : glassStyle === "frosted"
-            ? "apple-glass-frosted"
-            : "apple-glass-clean"
-        }`}
-      >
-        <div className="flex items-center justify-between gap-2 border-b border-hairline/60 pb-2 mb-2.5">
-          <p
-            className={`text-[12px] font-semibold ${
-              accentTone === "brass"
+              ? "apple-glass-frosted"
+              : "apple-glass-clean"
+            }`}
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-hairline/60 pb-2 mb-2.5">
+            <p
+              className={`text-[12px] font-semibold ${accentTone === "brass"
                 ? "text-brass-dark"
                 : accentTone === "emerald"
-                ? "text-emerald-600"
-                : accentTone === "berry"
-                ? "text-berry"
-                : "text-sky-600"
-            }`}
-          >
-            You just built this
-          </p>
-          <span className="text-[10px] text-slate uppercase font-mono">Customized</span>
-        </div>
-        <p className="mt-1 text-[15px] font-medium leading-relaxed text-ink-700">{title}</p>
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {skillList.map((s) => (
-            <span
-              key={s}
-              className={`rounded-md px-2.5 py-1 text-[12px] font-medium ${
-                accentTone === "brass"
+                  ? "text-emerald-600"
+                  : accentTone === "berry"
+                    ? "text-berry"
+                    : "text-sky-600"
+                }`}
+            >
+              You just built this
+            </p>
+            <span className="text-[10px] text-slate uppercase font-mono">Customized</span>
+          </div>
+          <p className="mt-1 text-[15px] font-medium leading-relaxed text-ink-700">{title}</p>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {skillList.map((s) => (
+              <span
+                key={s}
+                className={`rounded-md px-2.5 py-1 text-[12px] font-medium ${accentTone === "brass"
                   ? "border border-brass/40 bg-brass/10 text-brass-dark"
                   : accentTone === "emerald"
-                  ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-700"
-                  : accentTone === "berry"
-                  ? "border border-berry/40 bg-berry/10 text-berry"
-                  : "border border-sky-500/40 bg-sky-500/10 text-sky-700"
-              }`}
-            >
-              {s}
-            </span>
-          ))}
-          {evidenceUrl.trim() && (
-            <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[12px] font-medium text-emerald-700">
-              1 piece of evidence
-            </span>
-          )}
+                    ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-700"
+                    : accentTone === "berry"
+                      ? "border border-berry/40 bg-berry/10 text-berry"
+                      : "border border-sky-500/40 bg-sky-500/10 text-sky-700"
+                  }`}
+              >
+                {s}
+              </span>
+            ))}
+            {evidenceUrl.trim() && (
+              <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[12px] font-medium text-emerald-700">
+                1 piece of evidence
+              </span>
+            )}
+          </div>
         </div>
-      </div>
 
       )}
 
@@ -1099,13 +1114,12 @@ function StepKeep({
                 setUsernameCustomized(true);
                 setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""));
               }}
-              className={`input w-full pl-8 pr-28 transition-all ${
-                usernameStatus === "available"
-                  ? "border-emerald-500/60 ring-1 ring-emerald-500/25"
-                  : usernameStatus === "taken"
+              className={`input w-full pl-8 pr-28 transition-all ${usernameStatus === "available"
+                ? "border-emerald-500/60 ring-1 ring-emerald-500/25"
+                : usernameStatus === "taken"
                   ? "border-amber-500/60 ring-1 ring-amber-500/25"
                   : ""
-              }`}
+                }`}
               placeholder="amina-hassan"
             />
 
@@ -1178,29 +1192,29 @@ function StepKeep({
 
         {/* Phone number (Admin > Onboarding can turn this off). Your activation code is texted here. */}
         {phoneEnabled && (
-        <div className="flex flex-col gap-1.5 text-sm font-medium text-ink-700">
-          <div className="flex items-center justify-between">
-            <label htmlFor="phone-input" className="text-sm font-medium text-ink-700">
-              Phone number
-            </label>
-            <span className="text-[11px] text-slate">We text your activation code here</span>
-          </div>
+          <div className="flex flex-col gap-1.5 text-sm font-medium text-ink-700">
+            <div className="flex items-center justify-between">
+              <label htmlFor="phone-input" className="text-sm font-medium text-ink-700">
+                Phone number
+              </label>
+              <span className="text-[11px] text-slate">We text your activation code here</span>
+            </div>
 
-          <div className="relative flex items-center">
-            <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate/60">
-              <Smartphone className="h-4 w-4" />
-            </span>
-            <input
-              id="phone-input"
-              type="tel"
-              autoComplete="tel"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              className="input w-full pl-9 text-[13px]"
-              placeholder="+255 712 345 678"
-            />
+            <div className="relative flex items-center">
+              <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate/60">
+                <Smartphone className="h-4 w-4" />
+              </span>
+              <input
+                id="phone-input"
+                type="tel"
+                autoComplete="tel"
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                className="input w-full pl-9 text-[13px]"
+                placeholder="+255 712 345 678"
+              />
+            </div>
           </div>
-        </div>
         )}
 
         {/* Email */}
@@ -1368,9 +1382,8 @@ function StepQuestions({
                             ? set(q.id, selected ? (v as string[]).filter((x) => x !== o) : [...((v as string[]) ?? []), o])
                             : set(q.id, o)
                         }
-                        className={`rounded-xl border px-3 py-1.5 text-[13px] font-medium transition-all cursor-pointer ${
-                          selected ? "border-ink bg-ink text-paper" : "border-hairline bg-paper text-ink-700 hover:border-slate/40"
-                        }`}
+                        className={`rounded-xl border px-3 py-1.5 text-[13px] font-medium transition-all cursor-pointer ${selected ? "border-ink bg-ink text-paper" : "border-hairline bg-paper text-ink-700 hover:border-slate/40"
+                          }`}
                       >
                         {o}
                       </button>

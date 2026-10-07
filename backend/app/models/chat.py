@@ -32,6 +32,9 @@ class ChatMessage(Base):
     # One file per message: {"name": <uploads.name>, "filename", "content_type", "size"} (served by /chat/attachments).
     attachment: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     inserted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Taken back by its author (or a group admin): the text and file are blanked, the row stays.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ChatGroup(Base):
@@ -44,6 +47,7 @@ class ChatGroup(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     topic: Mapped[str] = mapped_column(String(200), nullable=False, default="", server_default="")
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(300), nullable=True)  # /files/<name> of an image an admin uploaded
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -60,3 +64,14 @@ class ChatGroupMember(Base):
     invited_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ChatClear(Base):
+    """"Delete chat": this member doesn't see this conversation's messages up to `up_to` (a chat_messages.id) any more."""
+
+    __tablename__ = "chat_clears"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    topic: Mapped[str] = mapped_column(String(200), primary_key=True)
+    up_to: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    cleared_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

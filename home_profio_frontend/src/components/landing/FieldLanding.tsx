@@ -2,92 +2,101 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { BadgeCheck, CreditCard, Heart, Layers } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { HeroDesk } from "@/components/landing/HeroDesk";
+import { HolisticGrowthSection } from "@/components/landing/HolisticGrowthSection";
+import { JourneyShowcase } from "@/components/landing/JourneyShowcase";
+import { PricingDonate } from "@/components/landing/PricingDonate";
+import { WhoItsFor } from "@/components/landing/WhoItsFor";
+import { DeskToProofShowcase } from "@/components/landing/DeskToProofShowcase";
+import { HowItWorks } from "@/components/landing/HowItWorks";
+import { Footer, type FooterColumn } from "@/components/landing/Footer";
+import { Header, type HeaderLink } from "@/components/landing/Header";
 
 /**
- * Scroll-driven landing page (test). One fixed stage behind the content: a photo per section that
- * cross-fades and drifts slowly, with a light field of dust that re-forms for each section (it
- * drifts, flows, rises, then snaps to a grid), as in the "FIELD" reference. Pure CSS/canvas 2D:
- * no WebGPU, no extra libraries, a few hundred KB of images, and everything stops for people who
- * ask for reduced motion.
+ * The home page: a scroll-driven story over one fixed stage. The stage swaps between a dark room
+ * (the opening, with the laptop and devices) and a different photographed setting for each section,
+ * with slow drift, parallax and a light field of dust that re-forms for every room. Canvas 2D and
+ * CSS only (no WebGPU, no extra libraries); everything stops for people who ask for reduced motion.
  */
 
-interface Scene {
-  numeral: string;
-  label: string;
-  title: string;
-  body: string;
-  specs: [string, string][];
-  image: string;
-  position: string; // object-position: keeps the text baked into the photos out of frame
-}
+type Bg = { kind: "room" } | { kind: "photo"; src: string; position: string };
 
-const SCENES: Scene[] = [
+// One background per section, in page order. Photos sit in a box taller than the screen and pushed
+// down, so the words and watermarks baked into them fall off-screen.
+const BACKGROUNDS: Bg[] = [
+  { kind: "room" },
+  { kind: "photo", src: "/images/sectionImage.jpeg", position: "50% 100%" },
+  { kind: "photo", src: "/images/where-your-proof-comes-from.jpeg", position: "50% 100%" },
+  { kind: "photo", src: "/images/cv-certificates-proof.jpeg", position: "50% 100%" },
+  { kind: "photo", src: "/images/all-poples-fit-on-us.jpeg", position: "50% 100%" },
+  { kind: "photo", src: "/images/problem-solving-discussion.jpeg", position: "50% 100%" },
+  { kind: "photo", src: "/images/Connect.jpeg", position: "50% 100%" },
+];
+
+
+const EVIDENCE: { label: string; kind: string; body: string; example: string }[] = [
+  { label: "Code & repos", kind: "Git commits & PR diffs", body: "Verifiable author signatures and test records, without exposing proprietary code.", example: "Merged PR · test suite green" },
+  { label: "Certifications", kind: "PDF with digital seal", body: "Tamper-proof credentials issued directly by accredited institutions.", example: "Certified Public Accountant, Part II" },
+  { label: "Research & data", kind: "Notebooks & preprints", body: "Open datasets and peer-reviewed preprint records with immutable timestamps.", example: "Microgrid telemetry dataset v2.4" },
+  { label: "Match & video reels", kind: "Timestamped video", body: "Timestamped match plays linked directly to verified team sheets.", example: "U-20 regional league, match 14" },
+  { label: "Business ledgers", kind: "Anonymised ledgers & audits", body: "Verify commercial achievements without revealing confidential data.", example: "VAT reconciliation model 2026" },
+];
+
+const FEATURES: { title: string; body: string }[] = [
+  { title: "Start small, expand as you go", body: "Pick your work type and only the relevant fields appear: zero clutter, zero friction." },
+  { title: "One person, many disciplines", body: "Link achievements across roles and institutions into one permanent, verified profile." },
+  { title: "Honest status, without false claims", body: "Every milestone reflects the truth, whether you're building, testing or done." },
+  { title: "Solve real challenges together", body: "Work on real organisational problems and earn direct, verified attribution." },
+];
+
+
+const CONNECT_SPECS: [string, string][] = [
+  ["Share", "Link or QR code"],
+  ["Talk", "Direct and group chat"],
+  ["Calls", "Voice and video"],
+];
+
+// The shared header and footer, pointed at this page's sections.
+const HEADER_LINKS: HeaderLink[] = [
+  { href: "#growth-section", label: "Life & Wellness", shortLabel: "Wellness", desc: "Vitality, daily pulse, and experiments", icon: Heart },
+  { href: "#scene-1", label: "Platform", shortLabel: "Platform", desc: "The journey from a first note to a permanent record", icon: Layers },
+  { href: "#pipeline", label: "Features", shortLabel: "Features", desc: "Do the work once, proven everywhere", icon: BadgeCheck },
+  { href: "#scene-6", label: "Pricing", shortLabel: "Pricing", desc: "Free to start", icon: CreditCard },
+];
+
+const FOOTER_COLUMNS: FooterColumn[] = [
   {
-    numeral: "I",
-    label: "Capture",
-    title: "Write it down while it's true.",
-    body: "Add what you did, learned or solved in about a minute. It starts private and stays private until you decide to show it.",
-    specs: [
-      ["Starts as", "Private"],
-      ["You add", "Work, learning, problems, achievements"],
-      ["Takes", "About a minute"],
+    heading: "Platform",
+    links: [
+      { label: "Life & Wellness", href: "#growth-section" },
+      { label: "How it works", href: "#scene-1" },
+      { label: "Proof, not claims", href: "#scene-2" },
+      { label: "Who it's for", href: "#scene-4" },
+      { label: "Connect", href: "#scene-5" },
     ],
-    image: "/images/sectionImage.jpeg",
-    position: "50% 100%",
   },
   {
-    numeral: "II",
-    label: "Prove",
-    title: "Put the proof next to the claim.",
-    body: "Links, files and certificates sit beside what you say you did. Organisations can confirm the roles you held, and your CV is valid once you sign it.",
-    specs: [
-      ["Evidence", "Links, photos, PDFs"],
-      ["Roles", "Confirmed by the organisation"],
-      ["Your CV", "Signed by you"],
+    heading: "Account",
+    links: [
+      { label: "Sign in", href: "/login" },
+      { label: "Get started", href: "/start" },
     ],
-    image: "/images/where-your-proof-comes-from.jpeg",
-    position: "50% 100%",
-  },
-  {
-    numeral: "III",
-    label: "Connect",
-    title: "Be found for what you actually did.",
-    body: "Share a public page, or a signed CV as a link or QR code. Message, call and work with the people you meet along the way.",
-    specs: [
-      ["Share", "Link or QR code"],
-      ["Talk", "Direct and group chat"],
-      ["Calls", "Voice and video"],
-    ],
-    image: "/images/problem-solving-discussion.jpeg",
-    position: "50% 100%",
-  },
-  {
-    numeral: "IV",
-    label: "Everyone",
-    title: "One identity. Many kinds of work.",
-    body: "Developers, nurses, designers, founders, footballers: what you record fits the work you do, not a form built for someone else.",
-    specs: [
-      ["Fields", "Change with your kind of work"],
-      ["For", "Students to founders"],
-      ["Profile", "Yours to shape"],
-    ],
-    image: "/images/all-poples-fit-on-us.jpeg",
-    position: "50% 100%",
   },
 ];
+
+const RAIL = ["Start", "Wellness", "Journey", "Proof", "CV", "Everyone", "Connect", "Begin"];
 
 export function FieldLanding() {
   const reduce = useReducedMotion();
   const [active, setActive] = useState(0);
   const activeRef = useRef(0);
   const stageRef = useRef<HTMLDivElement>(null);
-  const sections = useRef<(HTMLElement | null)[]>([]);
-
-  // Which scene is on screen: drives the photo cross-fade and the dust's formation.
+  // Which room is on screen: drives the background cross-fade and the dust's formation.
   useEffect(() => {
-    const els = sections.current.filter(Boolean) as HTMLElement[];
+    const els = [...document.querySelectorAll<HTMLElement>("[data-scene]")];
     const io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
@@ -112,7 +121,7 @@ export function FieldLanding() {
       if (raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
-        if (stageRef.current) stageRef.current.style.transform = `translate3d(0, ${-window.scrollY * 0.06}px, 0)`;
+        if (stageRef.current) stageRef.current.style.transform = `translate3d(0, ${-window.scrollY * 0.04}px, 0)`;
       });
     };
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -123,162 +132,192 @@ export function FieldLanding() {
   }, [reduce]);
 
   return (
-    <div className="relative bg-[#0c0a08] text-[#f4efe6]">
+    <div className="relative bg-[#0a1119] text-[#f4efe6]">
       {/* ---------- fixed stage ---------- */}
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-        <div ref={stageRef} className="absolute -inset-[8%] will-change-transform">
-          {SCENES.map((s, i) => (
-            <div key={s.image} className="absolute inset-0 transition-opacity duration-[1400ms] ease-out" style={{ opacity: active === i ? 1 : 0 }}>
-              {/* The photo sits in a box taller than the screen and pushed down, so the headline written
-                  into the picture (top) and its "video replay" mark (bottom corner) fall off-screen. */}
-              <motion.div
-                className="absolute inset-x-0 -bottom-[16%] h-[165%]"
-                animate={reduce || active !== i ? undefined : { scale: [1.02, 1.1] }}
-                transition={{ duration: 28, ease: "easeInOut", repeat: Infinity, repeatType: "reverse" }}
-                style={{ transformOrigin: "50% 60%" }}
-              >
-                <Image
-                  src={s.image}
-                  alt=""
-                  fill
-                  sizes="(max-width: 768px) 260vw, 110vw"
-                  quality={70}
-                  priority={i === 0}
-                  className="object-cover"
-                  style={{ objectPosition: s.position }}
-                />
-              </motion.div>
+        <div ref={stageRef} className="absolute -inset-[6%] will-change-transform">
+          {BACKGROUNDS.map((bg, i) => (
+            <div key={i} className="absolute inset-0 transition-opacity duration-[1400ms] ease-out" style={{ opacity: active === i ? 1 : 0 }}>
+              {bg.kind === "room" ? (
+                <div className="absolute inset-0 bg-[radial-gradient(70%_60%_at_30%_35%,#16293b_0%,#0c151f_55%,#070b10_100%)]" />
+              ) : (
+                <motion.div
+                  className="absolute inset-0 h-full w-full"
+                  animate={reduce || active !== i ? undefined : { scale: [1.01, 1.05] }}
+                  transition={{ duration: 28, ease: "easeInOut", repeat: Infinity, repeatType: "reverse" }}
+                  style={{ transformOrigin: "50% 50%" }}
+                >
+                  <Image
+                    src={bg.src}
+                    alt=""
+                    fill
+                    sizes="100vw"
+                    quality={90}
+                    priority={i === 1}
+                    className="object-cover"
+                    style={{ objectPosition: bg.position }}
+                  />
+                </motion.div>
+              )}
             </div>
           ))}
         </div>
-        {/* Darken for legibility: heavier at the left where the text sits, vignette at the edges. */}
-        <div className="absolute inset-0 bg-black/30 sm:bg-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/55 to-black/25" />
+        <div className="absolute inset-0 bg-black/35 sm:bg-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/60 to-black/35" />
         <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/70" />
         {!reduce && <Dust activeRef={activeRef} />}
       </div>
 
-      {/* ---------- top bar ---------- */}
-      <header className="fixed inset-x-0 top-0 z-30 flex items-center justify-between bg-gradient-to-b from-black/80 via-black/45 to-transparent px-5 pb-6 pt-4 backdrop-blur-[3px] sm:px-10 [mask-image:linear-gradient(to_bottom,black_65%,transparent)]">
-        <Link href="/" className="text-[15px] font-semibold tracking-wide text-white">
-          Home Proofolio
-        </Link>
-        <nav className="flex items-center gap-2 text-[13px] font-semibold">
-          <Link href="/login" className="rounded-full px-4 py-2 text-white/80 transition-colors hover:text-white">
-            Sign in
-          </Link>
-          <Link href="/start" className="rounded-full bg-white px-4 py-2 text-black transition-transform hover:scale-[1.03]">
-            Get started
-          </Link>
-        </nav>
-      </header>
+      <Header variant="night" links={HEADER_LINKS} />
 
       {/* ---------- progress rail ---------- */}
       <ol aria-label="Sections" className="fixed right-4 top-1/2 z-30 hidden -translate-y-1/2 flex-col gap-3 sm:flex">
-        {SCENES.map((s, i) => (
-          <li key={s.label}>
+        {RAIL.map((label, i) => (
+          <li key={label}>
             <a
               href={`#scene-${i}`}
-              aria-label={s.label}
+              aria-label={label}
+              title={label}
               aria-current={active === i}
-              className={`block h-8 w-[3px] rounded-full transition-all duration-500 ${active === i ? "bg-white" : "bg-white/25 hover:bg-white/50"}`}
+              className={`block h-7 w-[3px] rounded-full transition-all duration-500 ${active === i ? "bg-white" : "bg-white/25 hover:bg-white/50"}`}
             />
           </li>
         ))}
       </ol>
 
       <main className="relative z-10">
-        {/* ---------- hero ---------- */}
-        <section className="flex min-h-svh flex-col justify-center px-5 pb-24 pt-28 sm:px-10 lg:px-[8vw]">
-          <Rise>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-[#e8c777]">Your work · with the proof</p>
-          </Rise>
-          <Rise delay={0.08}>
-            <h1 className="mt-6 max-w-[16ch] font-display text-[clamp(2.6rem,8.5vw,7rem)] font-bold leading-[0.98] tracking-tight">
-              A career is easier to believe when you can see it.
-            </h1>
-          </Rise>
-          <Rise delay={0.16}>
-            <p className="mt-8 max-w-xl text-[clamp(1rem,1.6vw,1.2rem)] leading-relaxed text-white/75">
-              Home Proofolio turns what you&apos;ve learned, built, solved and proved into one living record, with the evidence attached.
-              Keep scrolling: it&apos;s the same story, in four rooms.
-            </p>
-          </Rise>
-          <Rise delay={0.24}>
-            <div className="mt-10 flex flex-wrap items-center gap-3">
-              <Link href="/start" className="rounded-full bg-white px-7 py-3.5 text-[14px] font-semibold text-black transition-transform hover:scale-[1.03]">
-                Start your Proofolio
-              </Link>
-              <a href="#scene-0" className="rounded-full border border-white/30 px-7 py-3.5 text-[14px] font-semibold text-white transition-colors hover:bg-white/10">
-                See how it works
-              </a>
-            </div>
-          </Rise>
-          <p className="absolute bottom-8 left-5 text-[10px] font-semibold uppercase tracking-[0.4em] text-white/45 sm:left-10 lg:left-[8vw]">Scroll</p>
-        </section>
+        <HeroDesk id="scene-0" data-scene={0} underFixedHeader />
 
-        {/* ---------- scenes ---------- */}
-        {SCENES.map((s, i) => (
-          <section
-            key={s.label}
-            id={`scene-${i}`}
-            data-scene={i}
-            ref={(el) => {
-              sections.current[i] = el;
-            }}
-            className="flex min-h-svh scroll-mt-0 flex-col justify-center px-5 py-28 sm:px-10 lg:px-[8vw]"
-          >
-            <Rise>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-[#e8c777]">
-                {s.numeral} — {s.label}
-              </p>
-            </Rise>
-            <Rise delay={0.07}>
-              <h2 className="mt-5 max-w-[18ch] font-display text-[clamp(2.2rem,6.2vw,5rem)] font-bold leading-[1.02] tracking-tight">{s.title}</h2>
-            </Rise>
-            <Rise delay={0.14}>
-              <p className="mt-6 max-w-xl text-[clamp(1rem,1.5vw,1.15rem)] leading-relaxed text-white/75">{s.body}</p>
-            </Rise>
-            <Rise delay={0.2}>
-              <dl className="mt-10 grid max-w-2xl gap-x-10 gap-y-5 border-t border-white/20 pt-6 sm:grid-cols-3">
-                {s.specs.map(([k, v]) => (
-                  <div key={k}>
-                    <dt className="text-[10px] font-semibold uppercase tracking-[0.3em] text-white/50">{k}</dt>
-                    <dd className="mt-1.5 text-[15px] font-semibold leading-snug text-white">{v}</dd>
-                  </div>
-                ))}
-              </dl>
-            </Rise>
-          </section>
-        ))}
+        {/* ---------- Beyond Normal Portfolio: Life, Wellness & Proof of Growth ---------- */}
+        <div id="growth-section" data-scene={0} className="pf-night">
+          <HolisticGrowthSection />
+        </div>
+
+        {/* ---------- Journey (the previous landing page's showcase) ---------- */}
+        <div id="scene-1" data-scene={1} className="pf-night">
+          <JourneyShowcase />
+        </div>
+
+        {/* ---------- Desk to proof (from the previous landing page) ---------- */}
+        <div data-scene={1} className="pf-night">
+          <DeskToProofShowcase />
+        </div>
+
+        {/* ---------- II · Proof ---------- */}
+        <Scene n={2} numeral="II" label="Proof" title="Where your proof comes from." intro="Real-world evidence sources, each one attributable to you.">
+          <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {EVIDENCE.map((e, i) => (
+              <Card key={e.label} delay={i * 0.05}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[#e8c777]">{e.label}</p>
+                <h3 className="mt-2 text-[17px] font-bold leading-snug">{e.kind}</h3>
+                <p className="mt-2 text-[14px] leading-relaxed text-white/70">{e.body}</p>
+                <p className="mt-4 rounded-lg border border-white/15 bg-black/25 px-3 py-2 text-[12px] font-semibold text-white/80">{e.example}</p>
+              </Card>
+            ))}
+          </ul>
+        </Scene>
+
+        {/* ---------- III · CV and features ---------- */}
+        <Scene n={3} numeral="III" label="Your CV" title="A CV that proves itself." intro="Your CV fills itself from what you've done, you sign it to make it valid, and anyone can open it from a link or a QR code.">
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {FEATURES.map((f, i) => (
+              <Card key={f.title} delay={i * 0.06}>
+                <h3 className="text-[17px] font-bold leading-snug">{f.title}</h3>
+                <p className="mt-2 text-[14px] leading-relaxed text-white/70">{f.body}</p>
+              </Card>
+            ))}
+          </ul>
+        </Scene>
+
+        {/* ---------- Who it's for (the previous landing page's section, with the live discipline list) ---------- */}
+        <div id="scene-4" data-scene={4} className="pf-night">
+          <WhoItsFor />
+        </div>
+
+        {/* ---------- V · Connect ---------- */}
+        <div id="connect" className="scroll-mt-16">
+          <Scene n={5} numeral="V" label="Connect" title="Be found for what you actually did." intro="Share a public page, or a signed CV as a link or QR code. Message, call and work with the people you meet along the way.">
+            <dl className="grid max-w-2xl gap-x-10 gap-y-5 border-t border-white/20 pt-6 sm:grid-cols-3">
+              {CONNECT_SPECS.map(([k, v]) => (
+                <div key={k}>
+                  <dt className="text-[10px] font-semibold uppercase tracking-[0.3em] text-white/50">{k}</dt>
+                  <dd className="mt-1.5 text-[15px] font-semibold leading-snug text-white">{v}</dd>
+                </div>
+              ))}
+            </dl>
+          </Scene>
+        </div>
+
+        {/* ---------- How it works: the interactive demos (from the previous landing page) ---------- */}
+        <div data-scene={5} className="pf-night">
+          <HowItWorks />
+        </div>
 
         {/* ---------- closing ---------- */}
-        <section className="flex min-h-[80svh] flex-col items-start justify-center px-5 py-28 sm:px-10 lg:px-[8vw]">
+        <section id="scene-6" data-scene={6} className="flex min-h-[90svh] flex-col justify-center px-5 py-28 sm:px-10 lg:px-[8vw]">
           <Rise>
-            <h2 className="max-w-[16ch] font-display text-[clamp(2.4rem,7vw,5.5rem)] font-bold leading-[1] tracking-tight">Four rooms. One record. Yours.</h2>
+            <p className="mb-5 text-[11px] font-semibold uppercase tracking-[0.35em] text-[#e8c777]">Pricing</p>
+            <h2 className="max-w-[20ch] font-display text-[clamp(2.2rem,6vw,4.8rem)] font-bold leading-[1.02] tracking-tight">Free to use. Open to support.</h2>
           </Rise>
           <Rise delay={0.1}>
-            <p className="mt-6 max-w-md text-white/70">Free to start. Everything you add is private until you choose to share it.</p>
+            <p className="mt-5 max-w-xl text-white/70">Everything you add is private until you choose to share it. If Home Proofolio helps you, you can help keep it free for others.</p>
           </Rise>
-          <Rise delay={0.18}>
-            <div className="mt-10 flex flex-wrap gap-3">
-              <Link href="/start" className="rounded-full bg-white px-8 py-4 text-[14px] font-semibold text-black transition-transform hover:scale-[1.03]">
-                Start your Proofolio
-              </Link>
-              <Link href="/login" className="rounded-full border border-white/30 px-8 py-4 text-[14px] font-semibold text-white transition-colors hover:bg-white/10">
-                Sign in
-              </Link>
-            </div>
-          </Rise>
-          <p className="mt-24 text-[10px] uppercase tracking-[0.35em] text-white/35">Home Proofolio · Build. Prove. Connect.</p>
+          <div className="max-w-6xl">
+            <PricingDonate />
+          </div>
+          <p className="mt-8 text-[14px] text-white/60">
+            Already a member?{" "}
+            <Link href="/login" className="font-semibold text-white underline underline-offset-4 hover:text-[#e8c777]">
+              Sign in to your account
+            </Link>
+          </p>
         </section>
       </main>
+
+      <Footer variant="night" columns={FOOTER_COLUMNS} />
     </div>
   );
 }
 
+function Scene({ n, numeral, label, title, intro, children }: { n: number; numeral: string; label: string; title: string; intro: string; children: ReactNode }) {
+  return (
+    <section id={`scene-${n}`} data-scene={n} className="flex min-h-svh flex-col justify-center px-5 py-28 sm:px-10 lg:px-[8vw]">
+      <Rise>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-[#e8c777]">
+          {numeral} — {label}
+        </p>
+      </Rise>
+      <Rise delay={0.07}>
+        <h2 className="mt-5 max-w-[20ch] font-display text-[clamp(2.1rem,5.6vw,4.4rem)] font-bold leading-[1.03] tracking-tight">{title}</h2>
+      </Rise>
+      <Rise delay={0.14}>
+        <p className="mt-5 max-w-2xl text-[clamp(1rem,1.4vw,1.15rem)] leading-relaxed text-white/72">{intro}</p>
+      </Rise>
+      <div className="mt-10 max-w-6xl">{children}</div>
+    </section>
+  );
+}
+
+/** Frosted card that rises in when it scrolls into view. */
+function Card({ children, delay = 0, wide = false }: { children: ReactNode; delay?: number; wide?: boolean }) {
+  const reduce = useReducedMotion();
+  const cls = `rounded-2xl border border-white/15 bg-white/[0.07] p-5 backdrop-blur-md ${wide ? "sm:col-span-2" : ""}`;
+  if (reduce) return <li className={cls}>{children}</li>;
+  return (
+    <motion.li
+      className={cls}
+      initial={{ opacity: 0, y: 28 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-8% 0px" }}
+      transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1], delay }}
+    >
+      {children}
+    </motion.li>
+  );
+}
+
 /** Fade + rise as it enters the screen (once). Static for reduced motion. */
-function Rise({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
+function Rise({ children, delay = 0 }: { children: ReactNode; delay?: number }) {
   const reduce = useReducedMotion();
   if (reduce) return <div>{children}</div>;
   return (
@@ -294,9 +333,9 @@ function Rise({ children, delay = 0 }: { children: React.ReactNode; delay?: numb
 }
 
 /**
- * The field's dust: one set of motes that re-forms for each section, the way the reference's one
- * buffer becomes meadow, tide, ember and lattice. Positions are a blend of four formulas, eased
- * toward whichever section is on screen. ~100 dots, paused when the tab is hidden.
+ * The field's dust: one set of motes that re-forms for each section (it drifts, flows, rises, then
+ * snaps to a grid, and the cycle repeats). Positions are a blend of four formulas, eased toward the
+ * one for the section on screen. ~100 dots, paused when the tab is hidden.
  */
 function Dust({ activeRef }: { activeRef: { current: number } }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -336,29 +375,29 @@ function Dust({ activeRef }: { activeRef: { current: number } }) {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       const t = now / 1000;
-      // Ease the four formation weights toward the active section.
-      for (let k = 0; k < 4; k++) weights[k] += ((k === activeRef.current ? 1 : 0) - weights[k]) * Math.min(1, dt * 1.6);
+      const formation = activeRef.current % 4;
+      for (let k = 0; k < 4; k++) weights[k] += ((k === formation ? 1 : 0) - weights[k]) * Math.min(1, dt * 1.6);
 
       ctx.clearRect(0, 0, w, h);
       for (let i = 0; i < N; i++) {
         const m = motes[i];
-        // I — drift: slow rise with a sway.
+        // drift: slow rise with a sway
         const driftX = m.x + Math.sin(t * 0.25 + m.p) * 0.02;
         const driftY = (m.y - t * 0.012 * m.s + 4) % 1;
-        // II — flow: rows of waves moving sideways.
+        // flow: rows of waves moving sideways
         const row = Math.floor(m.y * 9) / 9;
         const flowX = (m.x + t * 0.03 * m.s + 4) % 1;
         const flowY = row + Math.sin(flowX * 9 + t * 0.9 + row * 6) * 0.03;
-        // III — rise: fast, from the bottom, fading out near the top.
+        // rise: fast, from the bottom, fading out near the top
         const riseY = (m.y - t * 0.05 * m.s + 4) % 1;
         const riseX = m.x + Math.sin(t * 0.6 + m.p) * 0.03 * (1 - riseY);
-        // IV — order: snapped to a grid, twinkling.
+        // order: snapped to a grid, twinkling
         const gx = Math.round(m.x * 14) / 14;
         const gy = Math.round(m.y * 8) / 8;
 
         const x = (driftX * weights[0] + flowX * weights[1] + riseX * weights[2] + gx * weights[3]) * w;
         const y = (driftY * weights[0] + flowY * weights[1] + riseY * weights[2] + gy * weights[3]) * h;
-        const fade = weights[2] * Math.sin(Math.min(1, riseY) * Math.PI) + (1 - weights[2]) * 1;
+        const fade = weights[2] * Math.sin(Math.min(1, riseY) * Math.PI) + (1 - weights[2]);
         const twinkle = 0.5 + 0.5 * Math.sin(t * 2 + m.p * 3);
         const alpha = (0.18 + 0.4 * (weights[3] * twinkle + (1 - weights[3]) * 0.55)) * fade;
         const r = m.s * (weights[3] > 0.5 ? 1.4 : 1) * (0.8 + weights[2] * 0.6);

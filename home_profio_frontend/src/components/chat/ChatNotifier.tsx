@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { BellRing, MessageCircle, Users, X } from "lucide-react";
 import { acceptGroupInvite, declineGroupInvite } from "@/lib/api";
 import { getOpenTopic, messagePreview, subscribeInbox, type ChatMessage, type GroupInvite, type Inbox } from "@/lib/realtime";
+import { allowed, desktopAllowed, playChime, popupsAllowed, previewAllowed, unlockAudio } from "@/lib/chime";
+import { enablePush, syncPush, type PushState } from "@/lib/push";
 
 const TOAST_MS = 6000;
 const chatHref = (topic: string) => `/chat?c=${encodeURIComponent(topic)}`;
@@ -23,8 +25,9 @@ export function useChatInbox(userId: string) {
 export const unreadTotal = (inbox: Inbox | null) => Object.values(inbox?.unread ?? {}).reduce((a, b) => a + b, 0);
 
 /**
- * "X sent you a message": a pop-up anywhere in the app, or a desktop notification while the tab is
- * in the background (after the member turns them on). Nothing for the chat already on screen.
+ * "X sent you a message": a pop-up and a chime anywhere in the app, or a notification while the tab is in the
+ * background (after the member turns them on; with Web Push on, the service worker shows that one, also when the
+ * site is closed). Nothing for the chat already on screen. The unread count also shows in the tab's title.
  * Group invitations pop up with Accept / Decline and stay until answered or dismissed; they are
  * also in the notification bell, so an invite sent while offline is answered from there later.
  */
@@ -35,6 +38,39 @@ export function ChatNotifier({ userId }: { userId: string }) {
   const [answering, setAnswering] = useState<string | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">("unsupported");
+  const [push, setPush] = useState<PushState | null>(null);
+  const inbox = useChatInbox(userId);
+  const unread = unreadTotal(inbox);
+
+  // Quietly register the service worker (and renew this device's subscription once a day) when the app opens.
+  useEffect(() => {
+    let live = true;
+    syncPush(userId)
+      .then((s) => live && setPush(s))
+      .catch(() => {});
+    // Clicking a notification while the site is open asks it to open that chat.
+    const onSw = (e: MessageEvent) => {
+      if (e.data?.type === "open-url" && typeof e.data.url === "string" && e.data.url.startsWith("/")) router.push(e.data.url);
+    };
+    navigator.serviceWorker?.addEventListener("message", onSw);
+    // Browsers only allow sound after a touch: unlock it on the first click, tap or key press.
+    const unlock = () => {
+      unlockAudio();
+      for (const ev of ["pointerdown", "keydown"]) window.removeEventListener(ev, unlock);
+    };
+    for (const ev of ["pointerdown", "keydown"]) window.addEventListener(ev, unlock, { passive: true });
+    return () => {
+      live = false;
+      navigator.serviceWorker?.removeEventListener("message", onSw);
+      for (const ev of ["pointerdown", "keydown"]) window.removeEventListener(ev, unlock);
+    };
+  }, [userId, router]);
+
+  // "(3) Home Proofolio": the unread count in the tab title, so it shows when the tab is in the background.
+  useEffect(() => {
+    const base = document.title.replace(/^\(\d+\)\s*/, "");
+    document.title = unread > 0 ? `(${unread > 99 ? "99+" : unread}) ${base}` : base;
+  }, [unread]);
 
   useEffect(() => {
     // Read after mount: Notification doesn't exist during server rendering (or on plain-http phones).
@@ -48,10 +84,14 @@ export function ChatNotifier({ userId }: { userId: string }) {
         onNotice: (msg) => {
           const topic = msg.topic || "";
           const hidden = document.visibilityState === "hidden";
-          if (topic === getOpenTopic() && !hidden) return;
-          if (hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
-            const n = new Notification(`${msg.author_name} sent you a message`, {
-              body: messagePreview(msg).slice(0, 140),
+          if (topic === getOpenTopic() && !hidden) return; // the chat on screen: it updates itself, no alert
+          if (!allowed("message")) return; // alerts are off (or do not disturb) on this device
+          playChime();
+          // With Web Push on, the service worker shows the notification for a hidden tab: don't show a second one.
+          if (hidden && push === "on") return;
+          if (hidden && desktopAllowed("message") && typeof Notification !== "undefined" && Notification.permission === "granted") {
+            const n = new Notification(msg.group_name ? `${msg.author_name} in ${msg.group_name}` : `${msg.author_name} sent you a message`, {
+              body: previewAllowed() ? messagePreview(msg).slice(0, 140) : "New message",
               tag: topic, // one per chat: newer messages replace it
               icon: "/images/home-profolio-logo.jpeg",
             });
@@ -62,13 +102,16 @@ export function ChatNotifier({ userId }: { userId: string }) {
             };
             return;
           }
+          if (!popupsAllowed("message")) return;
           setToasts((prev) => [...prev.filter((t) => t.topic !== topic), msg].slice(-3));
           setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== msg.id)), TOAST_MS);
         },
         onGroupInvite: (invite) => {
           refreshBell();
-          setInvites((prev) => [...prev.filter((i) => i.group_id !== invite.group_id), invite]);
-          if (document.visibilityState === "hidden" && typeof Notification !== "undefined" && Notification.permission === "granted") {
+          if (!allowed("activity")) return; // still in the bell
+          playChime("activity");
+          if (popupsAllowed("activity")) setInvites((prev) => [...prev.filter((i) => i.group_id !== invite.group_id), invite]);
+          if (document.visibilityState === "hidden" && desktopAllowed("activity") && typeof Notification !== "undefined" && Notification.permission === "granted") {
             const n = new Notification(`${invite.from} invited you to "${invite.name}"`, {
               body: "Open Proofolio to accept or decline.",
               tag: `group-${invite.group_id}`,
@@ -83,7 +126,7 @@ export function ChatNotifier({ userId }: { userId: string }) {
         onGroupsChanged: refreshBell,
         onNotificationsChanged: refreshBell,
       }),
-    [userId, router]
+    [userId, router, push]
   );
 
   const dismiss = (id: string) => setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -181,9 +224,9 @@ export function ChatNotifier({ userId }: { userId: string }) {
               </span>
               <span className="min-w-0">
                 <span className="block text-[13px] text-ink-800">
-                  <span className="font-semibold">{t.author_name}</span> sent you a message
+                  <span className="font-semibold">{t.author_name}</span> {t.group_name ? `in ${t.group_name}` : "sent you a message"}
                 </span>
-                <span className="block truncate text-[12px] text-slate">{messagePreview(t)}</span>
+                <span className="block truncate text-[12px] text-slate">{previewAllowed() ? messagePreview(t) : "New message"}</span>
               </span>
             </button>
             <button
@@ -198,7 +241,12 @@ export function ChatNotifier({ userId }: { userId: string }) {
           {permission === "default" && (
             <button
               type="button"
-              onClick={() => Notification.requestPermission().then(setPermission)}
+              onClick={() =>
+                enablePush()
+                  .then(setPush)
+                  .finally(() => typeof Notification !== "undefined" && setPermission(Notification.permission))
+                  .catch(() => {})
+              }
               className="ml-12 mt-1 inline-flex cursor-pointer items-center gap-1 text-[11px] font-semibold text-emerald-600 hover:underline"
             >
               <BellRing className="h-3 w-3" /> Also alert me when Proofolio is in the background

@@ -5,11 +5,15 @@ html {
   scroll-padding-top: 5rem;
   background-color: var(--color-paper);
   color: var(--color-ink-800);
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 body {
   background-color: var(--color-paper);
   color: var(--color-ink-800);
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 /*
@@ -740,6 +744,7 @@ body {
 
 .pf-shine {
   animation: pf-shine 4.5s cubic-bezier(.4, 0, .2, 1) infinite;
+  contain: paint;
 }
 
 .pf-spine {
@@ -1210,4 +1215,54 @@ html.dark .shimmer {
   );
   background-size: 200% 100%;
   animation: shimmerWave 1.6s ease-in-out infinite;
+}
+/* Landing page: devices floating up and down beside the laptop (off for reduced motion). */
+@keyframes pf-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2.4cqw); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .pf-float { animation: pf-float 5.2s ease-in-out infinite; will-change: transform; }
+}
+
+/* Landing hero photo: the phone and watch are cut out of the photo and float over it. The rise is a
+   percentage of each cut-out's own height, so it stays inside the gap filled behind it at any size.
+   The contact shadow on the desk thins out as the device lifts. */
+@keyframes desk-float-phone {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate(0deg); }
+  50% { transform: translate3d(0, -2.6%, 0) rotate(-0.5deg); }
+}
+@keyframes desk-float-watch {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -3.4%, 0); }
+}
+@keyframes desk-shadow {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.86); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .desk-float-phone { animation: desk-float-phone 6s ease-in-out infinite; will-change: transform; }
+  .desk-float-watch { animation: desk-float-watch 5s ease-in-out -1.8s infinite; will-change: transform; }
+  .desk-shadow-phone { animation: desk-shadow 6s ease-in-out infinite; }
+  .desk-shadow-watch { animation: desk-shadow 5s ease-in-out -1.8s infinite; }
+}
+
+/* Landing page: old light sections (Desk to proof, How it works) reused on the dark scroll story.
+   Same colour tokens as dark mode, always, with a see-through "paper" so the fixed backdrop shows. */
+.pf-night {
+  --color-ink: #f0f0f3;
+  --color-ink-700: #f0f0f3;
+  --color-ink-800: #ffffff;
+  --color-paper: rgba(10, 17, 25, 0.62);
+  --color-paper-dim: rgba(25, 33, 44, 0.7);
+  --color-brass: #e0b93f;
+  --color-brass-dark: #e0b93f;
+  --color-berry: #ff6b7f;
+  --color-berry-dark: #ff8d9d;
+  --color-slate: #a9b0b8;
+  --color-hairline: rgba(255, 255, 255, 0.14);
+  --color-mist: #1d1d1f;
+  --color-mist-dim: #6e6e73;
+  color: #f0f0f3;
+  color-scheme: dark;
 }

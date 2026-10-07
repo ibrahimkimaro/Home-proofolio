@@ -5,8 +5,10 @@
   "scripts": {
     "dev": "next dev -H 0.0.0.0 --webpack",
     "build": "next build --webpack",
-    "analyze": "cross-env ANALYZE=true next build --webpack",
+    "build:test": "cross-env NEXT_DIST_DIR=.next_test next build --webpack",
     "start": "next start",
+    "start:test": "cross-env NEXT_DIST_DIR=.next_test next start -p 3001 -H 0.0.0.0",
+    "analyze": "cross-env ANALYZE=true next build --webpack",
     "lint": "eslint"
   },
   "dependencies": {

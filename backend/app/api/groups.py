@@ -9,12 +9,13 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, text, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.api.uploads import IMAGES, save_upload
 from app.core.database import get_db
 from app.core.files import sign
 from app.models.activity import Notification
@@ -126,11 +127,15 @@ def _invite_pushes(group: ChatGroup, inviter_name: str, user_ids: list[uuid.UUID
     return [realtime.to_user(u, "group_invite", payload) for u in user_ids]
 
 
-async def _contact(db: AsyncSession, group: ChatGroup, my_role: str) -> dict:
+async def _contact(db: AsyncSession, group: ChatGroup, my_role: str, viewer_id: uuid.UUID | None = None) -> dict:
     topic = f"room:{group.slug}"
     last = (
         await db.execute(
-            text("SELECT body, inserted_at FROM chat_messages WHERE topic = :t ORDER BY id DESC LIMIT 1"), {"t": topic}
+            text(
+                "SELECT CASE WHEN deleted_at IS NOT NULL THEN 'This message was deleted' ELSE body END, inserted_at FROM chat_messages "
+                "WHERE topic = :t AND id > COALESCE((SELECT up_to FROM chat_clears WHERE user_id = :u AND topic = :t), 0) ORDER BY id DESC LIMIT 1"
+            ),
+            {"t": topic, "u": viewer_id},
         )
     ).first()
     count = (
@@ -143,7 +148,7 @@ async def _contact(db: AsyncSession, group: ChatGroup, my_role: str) -> dict:
         "name": group.name,
         "username": group.slug,
         "role": group.topic or "Group chat",
-        "avatar": None,
+        "avatar": sign(group.avatar_url) if group.avatar_url else None,
         "type": "group",
         "roomId": group.slug,
         "myRole": my_role,
@@ -180,7 +185,7 @@ async def my_groups(user: User = Depends(get_current_user), db: AsyncSession = D
         .join(ChatGroupMember, ChatGroupMember.group_id == ChatGroup.id)
         .where(ChatGroupMember.user_id == user.id, ChatGroupMember.status == "member")
     )
-    out = [await _contact(db, g, role) for g, role in rows.all()]
+    out = [await _contact(db, g, role, user.id) for g, role in rows.all()]
     out.sort(key=lambda c: c["lastMessageTime"] or "", reverse=True)
     return out
 
@@ -208,6 +213,7 @@ async def group_detail(group_id: uuid.UUID, user: User = Depends(get_current_use
     members.sort(key=lambda m: (m["status"] != "member", m["role"] != "admin", m["name"].lower()))
     return {
         "id": str(group.id), "name": group.name, "topic": group.topic, "slug": group.slug,
+        "avatar": sign(group.avatar_url) if group.avatar_url else None,
         "my_role": me.role, "my_status": me.status, "members": members,
     }
 
@@ -319,4 +325,87 @@ async def remove_member(group_id: uuid.UUID, member_id: uuid.UUID, user: User = 
         line = f"{await _name_of(db, user)} left the group" if leaving else f"{await _name_of(db, user)} removed {await _name_of(db, target_user)}"
         pushes.append(realtime.room_message(group.slug, await _post_system(db, group, user, line)))
     await db.commit()
+    await realtime.push(pushes)
+
+
+# ---- admin powers: rename, description, picture, delete the group ----
+
+class GroupEdit(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    topic: str | None = Field(default=None, max_length=200)
+
+
+async def _everyone(db: AsyncSession, group_id: uuid.UUID) -> list[uuid.UUID]:
+    """Members and people still invited: all of them should see the group's list entry update."""
+    return list(
+        (
+            await db.execute(select(ChatGroupMember.user_id).where(ChatGroupMember.group_id == group_id, ChatGroupMember.status.in_(("member", "invited"))))
+        ).scalars()
+    )
+
+
+async def _announce(db: AsyncSession, group: ChatGroup, user: User, lines: list[str]) -> None:
+    """Store a line for each change in the group's history, then tell everyone's open apps (after the commit)."""
+    seqs = [await _post_system(db, group, user, line) for line in lines]
+    members = await _everyone(db, group.id)
+    await db.commit()
+    await realtime.push([realtime.room_message(group.slug, q) for q in seqs] + [realtime.to_user(m, "groups_changed") for m in members])
+
+
+@router.patch("/{group_id}")
+async def edit_group(group_id: uuid.UUID, payload: GroupEdit, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Rename the group or change its description. Admins only. Each change appears in the chat as a line."""
+    group = await _require_admin(db, group_id, user)
+    who = await _name_of(db, user)
+    lines = []
+    if payload.name is not None and payload.name.strip() != group.name:
+        new = payload.name.strip()
+        if len(new) < 2:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "The group needs a name")
+        lines.append(f'{who} renamed the group from "{group.name}" to "{new}"')
+        group.name = new
+    if payload.topic is not None and payload.topic.strip() != group.topic:
+        group.topic = payload.topic.strip()
+        lines.append(f"{who} changed the group description")
+    if lines:
+        await _announce(db, group, user, lines)
+    return await _contact(db, group, "admin", user.id)
+
+
+@router.post("/{group_id}/avatar")
+async def set_group_avatar(group_id: uuid.UUID, file: UploadFile, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Set the group's picture (an image). Admins only."""
+    group = await _require_admin(db, group_id, user)
+    group.avatar_url = await save_upload(db, user, file, IMAGES, public=True)
+    await _announce(db, group, user, [f"{await _name_of(db, user)} changed the group picture"])
+    return await _contact(db, group, "admin", user.id)
+
+
+@router.delete("/{group_id}/avatar")
+async def remove_group_avatar(group_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    group = await _require_admin(db, group_id, user)
+    if group.avatar_url:
+        group.avatar_url = None
+        await _announce(db, group, user, [f"{await _name_of(db, user)} removed the group picture"])
+    return await _contact(db, group, "admin", user.id)
+
+
+@router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_group(group_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Delete the group for everyone: its messages are removed and every member loses the room. Admins only."""
+    group = await _require_admin(db, group_id, user)
+    who = await _name_of(db, user)
+    members = await _everyone(db, group_id)
+    topic = f"room:{group.slug}"
+    await db.execute(text("DELETE FROM chat_messages WHERE topic = :t"), {"t": topic})
+    await db.execute(text("DELETE FROM chat_clears WHERE topic = :t"), {"t": topic})
+    await db.execute(delete(Notification).where(Notification.kind == "group_invite", Notification.link == _invite_link(group_id)))
+    for m in members:
+        if m != user.id:
+            notify(db, m, "group", f'"{group.name}" was deleted by {who}')
+    slug = group.slug
+    await db.delete(group)  # its members go with it
+    await db.commit()
+    pushes = [realtime.member_removed(slug, m) for m in members]  # closes the room if it's open
+    pushes += [realtime.to_user(m, "groups_changed") for m in members] + [realtime.to_user(m, "notifications_changed") for m in members]
     await realtime.push(pushes)

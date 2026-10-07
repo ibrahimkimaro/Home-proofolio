@@ -6,6 +6,7 @@ import { KeyRound, Loader2, Mail, MessageSquareText, Smartphone, X } from "lucid
 import {
   ApiError,
   getActivationStatus,
+  fetchCurrentUser,
   sendActivationCode,
   verifyAccount,
   type ActivationStatus,
@@ -485,10 +486,65 @@ export function ActivateButton({
   );
 }
 
-/** Shown across the app while the account is suspended. The shimmer draws the eye right after sign-up. */
+/** Sent by the bell when the activation notice is clicked: open the dialog to type the code. */
+export const OPEN_ACTIVATION = "proofolio:open-activation";
+
+/**
+ * Shown across the app while the account isn't active. Once an admin has delivered the code, a bar counts down
+ * the 15 minutes: when it runs out the account is suspended (support only, see /suspended). The chime and the
+ * browser notification for the code's arrival come from the notification bell, which hears about it at once.
+ */
 export function ActivationBanner({ user }: { user: User }) {
   const pending = usePendingActivation(user);
   const reduce = useReducedMotionConfig();
+  const [info, setInfo] = useState<ActivationStatus | null>(null);
+  const [at, setAt] = useState(0);
+  const [now, setNow] = useState(0);
+  const [open, setOpen] = useState(false);
+
+  const refresh = useCallback(() => {
+    getActivationStatus()
+      .then((r) => {
+        setInfo(r);
+        setAt(Date.now());
+        setNow(Date.now());
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!pending) return;
+    const first = setTimeout(refresh, 0);
+    const id = setInterval(() => document.visibilityState === "visible" && refresh(), 60_000);
+    const onChange = () => refresh();
+    window.addEventListener("proofolio:notifications-changed", onChange);
+    const onOpen = () => setOpen(true);
+    window.addEventListener(OPEN_ACTIVATION, onOpen);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+      window.removeEventListener("proofolio:notifications-changed", onChange);
+      window.removeEventListener(OPEN_ACTIVATION, onOpen);
+    };
+  }, [pending, refresh]);
+
+  const left = info?.suspends_in_seconds != null ? Math.max(0, Math.ceil(info.suspends_in_seconds - (now - at) / 1000)) : null;
+  const counting = left !== null && left > 0;
+  const expired = left === 0;
+  useEffect(() => {
+    if (!counting) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [counting]);
+  useEffect(() => {
+    if (!expired) return;
+    // Time is up: ask the server (it decides) and go to the suspended page if so.
+    fetchCurrentUser()
+      .then((u) => (u.suspended ? window.location.assign("/suspended") : refresh()))
+      .catch(() => {});
+  }, [expired, refresh]);
+
+  const urgent = left !== null && left <= 120;
   return (
     <AnimatePresence initial={false}>
       {pending && (
@@ -502,26 +558,54 @@ export function ActivationBanner({ user }: { user: User }) {
         >
           <div
             role="status"
-            className="relative mx-4 mt-4 flex flex-col gap-3 overflow-hidden rounded-2xl border border-brass/40 bg-brass/10 px-4 py-3.5 sm:mx-6 sm:flex-row sm:items-center sm:gap-4"
+            className={`relative mx-4 mt-4 flex flex-col gap-3 overflow-hidden rounded-2xl border px-4 py-3.5 sm:mx-6 sm:flex-row sm:items-center sm:gap-4 ${
+              urgent ? "border-berry/40 bg-berry/10" : "border-brass/40 bg-brass/10"
+            }`}
           >
             <span
               aria-hidden="true"
               className="animate-shimmer pointer-events-none absolute inset-y-0 -left-1/2 w-[200%] bg-[linear-gradient(100deg,transparent_35%,rgba(255,255,255,0.55)_50%,transparent_65%)] dark:bg-[linear-gradient(100deg,transparent_35%,rgba(255,255,255,0.12)_50%,transparent_65%)]"
             />
-            <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brass/20 text-brass-dark">
+            <span className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${urgent ? "bg-berry/20 text-berry" : "bg-brass/20 text-brass-dark"}`}>
               <KeyRound className="h-[18px] w-[18px]" />
             </span>
             <div className="relative min-w-0 flex-1">
-              <p className="text-[14px] font-semibold text-ink">Your account isn&apos;t active yet</p>
-              <p className="mt-0.5 text-[13px] text-slate">
-                Enter the code we sent you to publish and share your work. Until then, everything stays private.
-              </p>
+              {left !== null ? (
+                <>
+                  <p className="text-[14px] font-semibold text-ink">
+                    Your code has arrived: enter it within <span className="tabular-nums">{clock(left)}</span>
+                  </p>
+                  <p className="mt-0.5 text-[13px] text-slate">
+                    When the time runs out your account is suspended: you can only contact support until you activate it.
+                  </p>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink/10" role="progressbar" aria-valuemin={0} aria-valuemax={CODE_TTL_S} aria-valuenow={left} aria-label="Time left to activate">
+                    <div
+                      className={`h-full rounded-full transition-[width] duration-1000 ease-linear ${urgent ? "bg-berry" : "bg-brass-dark"}`}
+                      style={{ width: `${Math.min(100, (left / CODE_TTL_S) * 100)}%` }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-[14px] font-semibold text-ink">Your account isn&apos;t active yet</p>
+                  <p className="mt-0.5 text-[13px] text-slate">
+                    Enter the code we send you to publish and share your work. Until then everything stays private, and you can send up to 5
+                    messages to other members.
+                  </p>
+                </>
+              )}
             </div>
-            <ActivateButton
-              user={user}
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
               className="relative shrink-0 cursor-pointer self-start rounded-full bg-ink px-5 py-2.5 text-[14px] font-semibold text-paper transition-transform hover:scale-[1.03] active:scale-[0.98] sm:self-center"
-            />
+            >
+              Activate now
+            </button>
           </div>
+          <AnimatePresence>
+            {open && <OtpDialog user={user} onVerified={() => setOpen(false)} onClose={() => setOpen(false)} />}
+          </AnimatePresence>
         </motion.div>
       )}
     </AnimatePresence>

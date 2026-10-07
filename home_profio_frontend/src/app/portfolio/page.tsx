@@ -43,6 +43,8 @@ import {
 } from "@/lib/api";
 import { KINDS, isPublic, kindOf, stateLabel } from "@/lib/items";
 import { AppShell, Avatar, displayName, useSession } from "@/components/app/AppShell";
+import { EngagementPanel } from "@/components/app/EngagementPanel";
+import { ContactEditor } from "@/components/app/ContactEditor";
 
 const SECTION_LABEL: Record<PortfolioSection, string> = {
   about: "About",
@@ -137,7 +139,7 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
           <h1 className="text-[26px] font-bold tracking-tight sm:text-[30px]">Portfolio</h1>
           <p className="mt-1 text-[14px] text-slate">Shape what visitors see. Only items you made Public appear here.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {!isLive && (
             <button
               type="button"
@@ -163,6 +165,8 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
           </Link>
         </div>
       </div>
+
+      <EngagementPanel />
 
       <div className="grid gap-4 lg:grid-cols-12">
         {/* Settings */}
@@ -304,6 +308,21 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
             </div>
           </section>
 
+          <section className={`${card} space-y-4`}>
+            <div>
+              <h2 className="text-[15px] font-bold">Contact &amp; social</h2>
+              <p className="text-[12px] text-slate">Everything you add here shows in your portfolio&apos;s contact area. Remove it and it disappears.</p>
+            </div>
+            <ContactEditor
+              contacts={s.contacts ?? []}
+              socials={s.socials ?? []}
+              signInEmail={user.email}
+              signInPhone={user.phone_number}
+              onContacts={(c) => set("contacts", c)}
+              onSocials={(x) => set("socials", x)}
+            />
+          </section>
+
           {/* Theme & Palette Comfort Tone */}
           <section className={`${card} space-y-4`}>
             <div>
@@ -412,7 +431,19 @@ function Preview({ user, s, works }: { user: User; s: PortfolioSettings; works: 
           <p className="text-[12px] italic text-slate">No public work yet.</p>
         );
       case "contact":
-        return <p className="text-[13px]">{s.contact_email || <span className="italic text-slate">Follow button only — no email shown.</span>}</p>;
+        return (
+          <p className="text-[13px]">
+            {s.contact_email || (s.contacts ?? []).length || (s.socials ?? []).length ? (
+              <>
+                {s.contact_email}
+                {(s.contacts ?? []).length > 0 && <span className="text-slate">{s.contact_email ? " + " : ""}{(s.contacts ?? []).length} more</span>}
+                {(s.socials ?? []).length > 0 && <span className="text-slate"> · {(s.socials ?? []).length} social</span>}
+              </>
+            ) : (
+              <span className="italic text-slate">Follow button only — no contact shown.</span>
+            )}
+          </p>
+        );
     }
   };
 

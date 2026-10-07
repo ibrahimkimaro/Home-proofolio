@@ -10,8 +10,16 @@ function withAnalyzer(config: NextConfig): NextConfig {
 }
 
 const nextConfig: NextConfig = {
+  // Configurable output directory so dev (.next) and prod-test (.next_test) don't overwrite each other
+  distDir: process.env.NEXT_DIST_DIR || ".next",
+
   // Turbopack empty config prevents Next 16 build conflict with custom webpack options
   turbopack: {},
+
+  // 85 is used by the landing hero plate: it is a dark, grainy photo that bands badly at 75.
+  images: {
+    qualities: [75, 85, 90, 95],
+  },
 
   // No floating Next.js button in development (compile/runtime errors still show).
   devIndicators: false,
@@ -20,8 +28,10 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: [
     "localhost",
     "localhost:3000",
+    "localhost:3001",
     "127.0.0.1",
     "127.0.0.1:3000",
+    "127.0.0.1:3001",
     "192.168.100.60",
     "192.168.100.60:3000",
     "192.168.100.16",
@@ -32,11 +42,12 @@ const nextConfig: NextConfig = {
     "*.devtunnels.ms:3000",
     "homeproofolio.devtunnels.ms",
     "rl4whc7r-3000.uks1.devtunnels.ms",
+    "rl4whc7r-3001.uks1.devtunnels.ms",
     "*.lhr.life",
     "*.localhost.run",
     "*.trycloudflare.com",
     "*.local",
-    "*.lan",
+    "*.lan"
   ],
 
   // Proxy /api/* → backend so browser cookies work on same origin (no cross-port issues)

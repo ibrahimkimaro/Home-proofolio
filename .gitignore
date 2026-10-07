@@ -1,12 +1,14 @@
 # Node / Next.js
 node_modules/
 .next/
+.next_test/
 *.tsbuildinfo
 .env.local
 .env*.local
 /.env
 home_profio_frontend/node_modules/
 home_profio_frontend/.next/
+home_profio_frontend/.next_test/
 home_profio_frontend/.env.local
 home_profio_frontend/.env*.local
 home_profio_frontend/*.tsbuildinfo
@@ -37,3 +39,7 @@ core.*
 .playwright-mcp/
 .claude/
 .agents/
+
+# Local root certificates (e.g. an antivirus mail shield) the backend is told to trust
+/backend/certs/
+tools/zrok.exe

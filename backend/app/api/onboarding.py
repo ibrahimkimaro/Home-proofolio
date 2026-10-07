@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.models.profile import Profile
 from app.models.platform import OnboardingAnswer, OnboardingCategory, OnboardingQuestion, OnboardingRole
 from app.models.user import User
 from app.services.platform import get_setting
@@ -99,6 +100,12 @@ async def save_onboarding_answers(payload: AnswersIn, user: User = Depends(get_c
     if rows:
         await db.execute(delete(OnboardingAnswer).where(OnboardingAnswer.user_id == user.id, OnboardingAnswer.question_key.in_(rows)))
         db.add_all(OnboardingAnswer(user_id=user.id, question_key=k, answer={"value": v}) for k, v in rows.items())
+        # The kind of work they picked is what the profile and CV lead with, unless they already wrote their own headline.
+        if payload.discipline:
+            role = await db.get(OnboardingRole, payload.discipline)
+            profile = await db.scalar(select(Profile).where(Profile.user_id == user.id))
+            if role and profile and not (profile.headline or "").strip():
+                profile.headline = role.label
         await db.commit()
 
 

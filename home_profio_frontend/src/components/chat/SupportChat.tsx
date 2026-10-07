@@ -138,8 +138,12 @@ export function SupportChat({
     };
   }, [topic, myId, send, guestToken]);
 
+  // The first messages appear already at the bottom (no sweep down from the top); later ones glide in.
+  const shownFirst = useRef(false);
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (!messages.length) return;
+    bottom.current?.scrollIntoView({ behavior: shownFirst.current ? "smooth" : "auto", block: "end" });
+    shownFirst.current = true;
   }, [messages, peerTyping]);
 
   const onType = (v: string) => {

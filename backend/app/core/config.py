@@ -10,6 +10,20 @@ class Settings(BaseSettings):
     client_ip_header: str | None = None
     # realtime_chat (Phoenix), for live pushes after a change here (app/services/realtime.py).
     realtime_internal_url: str = "http://127.0.0.1:4000"
+    # Outgoing email (Admin > Messages > Email). Empty host/user/password = email stays a manual export.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_name: str = "Home Proofolio"
+    # Extra root certificate to trust for the mail connection (some antivirus "mail shields" re-sign it). Checking stays on.
+    smtp_ca_file: str = ""
+    # Web Push (notifications when the site is closed). Empty keys = off. Made with `web-push generate-vapid-keys`.
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_subject: str = "mailto:homeproofolio@gmail.com"
+    # Where the site lives, for links in emails when the request has no Origin (CV links).
+    site_url: str = "http://localhost:3001"
 
     model_config = SettingsConfigDict(
         env_file=".env",

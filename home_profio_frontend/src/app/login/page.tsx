@@ -16,7 +16,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { AnimatePresence } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { ApiError, loginUser, type User } from "@/lib/api";
 import { OtpDialog } from "@/components/app/Activation";
 import { resumePending, safeNext } from "@/lib/pending";
@@ -66,7 +66,12 @@ export default function LoginPage() {
         <div className="dotgrid absolute inset-0 opacity-30" />
       </div>
 
-      <div className="relative w-full max-w-md">
+      <motion.div
+        initial={{ opacity: 0, y: 22, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+        className="relative w-full max-w-md"
+      >
         {/* Top Floating Action Bar: Back to Home + Theme Toggle */}
         <div className="mb-6 flex items-center justify-between">
           <Link
@@ -211,7 +216,7 @@ export default function LoginPage() {
           <ShieldCheck className="h-4 w-4 text-emerald-600" />
           <span>Encrypted Session · Verified Evidence Ledger</span>
         </div>
-      </div>
+      </motion.div>
 
       <AnimatePresence>
         {suspended && <OtpDialog user={suspended} onVerified={proceed} onClose={proceed} />}

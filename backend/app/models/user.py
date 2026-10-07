@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -21,6 +21,8 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(default=False, nullable=False)
     # Signed up with a phone and hasn't entered the OTP yet; deleted if not verified in time.
     otp_pending: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
+    # When the first activation code went out, +15 minutes. Past it, a still-unactivated account is suspended.
+    activation_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Temporary unauthenticated visitor using guest support chat.
     is_guest: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
     # Per-member preferences (Settings), e.g. {"appearance": {...}} — synced across devices.
@@ -29,6 +31,11 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    @property
+    def suspended(self) -> bool:
+        """Not activated in time: only support (and entering a code) works until the account is activated."""
+        return bool(self.otp_pending and self.activation_deadline and self.activation_deadline < datetime.now(timezone.utc))
 
     profile: Mapped["Profile"] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
     sessions: Mapped[list["Session"]] = relationship(back_populates="user", cascade="all, delete-orphan")

@@ -83,6 +83,8 @@ class UserOut(BaseModel):
     phone_number: str | None = None
     is_admin: bool = False
     otp_pending: bool = False
+    suspended: bool = False  # not activated within 15 minutes of the code: support only
+    activation_deadline: datetime | None = None
     created_at: datetime
     profile: ProfileOut
     preferences: dict = {}
@@ -109,4 +111,5 @@ class ActivationStatus(BaseModel):
     destination: str
     sent: bool  # an admin has delivered it; the countdown runs from then
     expires_in_seconds: int | None = None  # only once sent
+    suspends_in_seconds: int | None = None  # the account is suspended when this runs out (set once the first code went out)
     resend_in_seconds: int = 0

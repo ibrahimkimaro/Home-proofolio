@@ -164,10 +164,10 @@ function SupportContent({ user }: { user: User | null }) {
 
   const me = user
     ? {
-        id: user.id,
-        name: displayName(user),
-        username: user.username || "member",
-      }
+      id: user.id,
+      name: displayName(user),
+      username: user.username || "member",
+    }
     : guestMe;
 
   return (
