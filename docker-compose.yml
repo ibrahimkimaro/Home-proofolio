@@ -36,6 +36,10 @@ services:
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:homeproofolio@gmail.com}
       WATCHFILES_FORCE_POLLING: "true"
+      # Host Ollama. It must listen on 0.0.0.0 (OLLAMA_HOST=0.0.0.0) to be reachable from the container.
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy

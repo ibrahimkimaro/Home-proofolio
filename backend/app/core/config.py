@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     # Where the site lives, for links in emails when the request has no Origin (CV links).
     site_url: str = "http://localhost:3001"
 
+    # Local Ollama (AI assistant, app/ai). From inside Docker use http://host.docker.internal:11434.
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen2.5-coder:latest"
+    # Hugging Face Inference API (image/TTS), not wired yet. Replace the local-only flow when added.
+    huggingface_api_token: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

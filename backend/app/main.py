@@ -6,6 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from strawberry.fastapi import GraphQLRouter
 
+from app.api.ai import router as ai_router
+from app.api.memories import router as memories_router
+from app.api.stories import router as stories_router
 from app.api.admin import router as admin_router
 from app.api.admin_messages import router as admin_messages_router
 from app.api.admin_security import router as admin_security_router
@@ -68,6 +71,9 @@ async def guard_and_measure(request: Request, call_next):
 
 
 app.include_router(auth_router)
+app.include_router(ai_router)
+app.include_router(memories_router)
+app.include_router(stories_router)
 app.include_router(work_router)
 app.include_router(templates_router)
 app.include_router(admin_router)

@@ -1,0 +1,4 @@
+
+# AI sandbox outputs
+ai_sandbox/*/*
+!ai_sandbox/*/.gitkeep
