@@ -95,6 +95,15 @@ defmodule RealtimeChat.Calls do
     end)
   end
 
+  @default_stun_servers [
+    "stun:stun.l.google.com:19302",
+    "stun:stun1.l.google.com:19302",
+    "stun:stun2.l.google.com:19302",
+    "stun:stun3.l.google.com:19302",
+    "stun:stun4.l.google.com:19302",
+    "stun:stun.cloudflare.com:3478"
+  ]
+
   @doc """
   RTCPeerConnection iceServers for this user. TURN credentials follow the TURN REST API that
   coturn's `use-auth-secret` verifies: username "<expiry>:<user_id>", password
@@ -104,36 +113,64 @@ defmodule RealtimeChat.Calls do
   """
   def ice_servers(user_id, host) do
     cfg = Application.get_env(:realtime_chat, :ice, [])
-    h = bracket(cfg[:turn_host] || host || "localhost")
-    port = cfg[:turn_port]
 
-    # Public STUN too: behind an HTTPS tunnel coturn's UDP port is often unreachable, and without
-    # any STUN two peers on different networks can't learn their public addresses at all.
-    stun =
+    # Check if client reached us via an HTTP tunnel where UDP/TCP 3478 is not forwarded.
+    is_tunnel =
+      is_binary(host) and
+        (String.contains?(host, "devtunnels.ms") or
+         String.contains?(host, "ngrok") or
+         String.contains?(host, "zrok") or
+         String.contains?(host, "loca.lt") or
+         String.contains?(host, "trycloudflare.com"))
+
+    # Only use host for local coturn if turn_host is explicitly set OR host is a real local/LAN host.
+    turn_host_candidate = cfg[:turn_host] || (if not is_tunnel, do: host, else: nil)
+    h = if turn_host_candidate, do: bracket(turn_host_candidate), else: nil
+    port = cfg[:turn_port] || 3478
+
+    # 1. Gather all STUN servers (local coturn STUN + Google/Cloudflare global STUN pool)
+    local_stun = if h && cfg[:turn_secret], do: ["stun:#{h}:#{port}"], else: []
+
+    stun_list =
       case cfg[:stun_urls] do
-        urls when is_binary(urls) and urls != "" -> String.split(urls, ",", trim: true)
-        _ -> if(cfg[:turn_secret], do: ["stun:#{h}:#{port}"], else: []) ++ ["stun:stun.l.google.com:19302"]
+        urls when is_binary(urls) and urls != "" ->
+          String.split(urls, ",", trim: true)
+
+        _ ->
+          local_stun ++ @default_stun_servers
       end
 
-    turn =
-      case cfg[:turn_secret] do
-        secret when is_binary(secret) and secret != "" ->
-          username = "#{System.system_time(:second) + @turn_ttl}:#{user_id}"
-          tls = if cfg[:turns_port], do: ["turns:#{h}:#{cfg[:turns_port]}?transport=tcp"], else: []
+    base_servers = [%{urls: Enum.uniq(stun_list)}]
 
-          [
-            %{
-              urls: ["turn:#{h}:#{port}?transport=udp", "turn:#{h}:#{port}?transport=tcp"] ++ tls,
-              username: username,
-              credential: Base.encode64(:crypto.mac(:hmac, :sha, secret, username))
-            }
-          ]
+    # 2. Add local Coturn if valid host is known and not on a tunnel without port forwarding
+    local_turn =
+      if h && is_binary(cfg[:turn_secret]) && cfg[:turn_secret] != "" do
+        username = "#{System.system_time(:second) + @turn_ttl}:#{user_id}"
+        tls = if cfg[:turns_port], do: ["turns:#{h}:#{cfg[:turns_port]}?transport=tcp"], else: []
+
+        [
+          %{
+            urls: ["turn:#{h}:#{port}?transport=udp", "turn:#{h}:#{port}?transport=tcp"] ++ tls,
+            username: username,
+            credential: Base.encode64(:crypto.mac(:hmac, :sha, cfg[:turn_secret], username))
+          }
+        ]
+      else
+        []
+      end
+
+    # 3. Add external cloud TURN if configured (e.g. Metered.ca, Twilio, etc.)
+    external_turn =
+      case {cfg[:external_turn_urls], cfg[:external_turn_username], cfg[:external_turn_credential]} do
+        {urls, u, p} when is_binary(urls) and urls != "" and is_binary(u) and is_binary(p) ->
+          turn_urls = String.split(urls, ",", trim: true)
+          [%{urls: turn_urls, username: u, credential: p}]
 
         _ ->
           []
       end
 
-    [%{urls: stun} | turn]
+    base_servers ++ local_turn ++ external_turn
   end
 
   defp bracket(host), do: if(String.contains?(host, ":"), do: "[#{host}]", else: host)

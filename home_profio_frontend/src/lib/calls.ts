@@ -348,9 +348,68 @@ async function join(s: Session, id: string, first: { to?: string; media?: CallMe
     });
 }
 
+const DEFAULT_STUN_SERVERS: RTCIceServer[] = [
+  {
+    urls: [
+      "stun:stun.l.google.com:19302",
+      "stun:stun1.l.google.com:19302",
+      "stun:stun2.l.google.com:19302",
+      "stun:stun3.l.google.com:19302",
+      "stun:stun4.l.google.com:19302",
+      "stun:stun.cloudflare.com:3478",
+    ],
+  },
+];
+
+function sanitizeIceServers(servers: RTCIceServer[]): RTCIceServer[] {
+  const currentHost = typeof window !== "undefined" ? window.location.hostname : "";
+  const isTunnel =
+    currentHost.includes("devtunnels.ms") ||
+    currentHost.includes("ngrok") ||
+    currentHost.includes("zrok") ||
+    currentHost.includes("loca.lt") ||
+    currentHost.includes("trycloudflare.com");
+
+  const sanitized: RTCIceServer[] = [];
+
+  for (const s of servers || []) {
+    const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+    const filteredUrls = urls.filter((url) => {
+      if (!url) return false;
+      // If we are on an HTTP tunnel, drop TURN URLs pointing to that tunnel because UDP/TCP 3478 is not forwarded
+      if (isTunnel && (url.startsWith("turn:") || url.startsWith("turns:"))) {
+        if (url.includes(currentHost) || url.includes("localhost") || url.includes("127.0.0.1")) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    if (filteredUrls.length > 0) {
+      sanitized.push({ ...s, urls: filteredUrls });
+    }
+  }
+
+  // Ensure high-availability STUN is always present
+  const hasStun = sanitized.some((s) => {
+    const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+    return urls.some((u) => u.startsWith("stun:"));
+  });
+
+  if (!hasStun) {
+    sanitized.unshift(...DEFAULT_STUN_SERVERS);
+  }
+
+  return sanitized;
+}
+
 function ensurePeer(s: Session): RTCPeerConnection {
   if (s.pc) return s.pc;
-  const pc = new RTCPeerConnection({ iceServers: s.iceServers, bundlePolicy: "max-bundle" });
+  const iceServers = sanitizeIceServers(s.iceServers);
+  if (process.env.NODE_ENV !== "production") {
+    console.info("[WebRTC] Using ICE servers:", iceServers);
+  }
+  const pc = new RTCPeerConnection({ iceServers, bundlePolicy: "max-bundle" });
   s.pc = pc;
 
   pc.onnegotiationneeded = async () => {
@@ -364,13 +423,35 @@ function ensurePeer(s: Session): RTCPeerConnection {
       s.makingOffer = false;
     }
   };
-  pc.onicecandidate = ({ candidate }) => signal(s, { candidate: candidate ? candidate.toJSON() : null });
+  pc.onicecandidate = ({ candidate }) => {
+    if (process.env.NODE_ENV !== "production" && candidate) {
+      console.info("[WebRTC] ICE candidate:", candidate.type, candidate.protocol, candidate.address);
+    }
+    signal(s, { candidate: candidate ? candidate.toJSON() : null });
+  };
   pc.ontrack = ({ track }) => {
     const tracks = (state?.remote?.getTracks() ?? []).filter((t) => t.kind !== track.kind || t.id === track.id);
     if (!tracks.includes(track)) tracks.push(track);
     set({ remote: new MediaStream(tracks) });
   };
-  pc.onconnectionstatechange = () => onConnectionState(s, pc);
+  pc.onconnectionstatechange = () => {
+    if (process.env.NODE_ENV !== "production") {
+      console.info("[WebRTC] connectionState:", pc.connectionState);
+    }
+    onConnectionState(s, pc);
+  };
+  pc.oniceconnectionstatechange = () => {
+    if (process.env.NODE_ENV !== "production") {
+      console.info("[WebRTC] iceConnectionState:", pc.iceConnectionState);
+    }
+    if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+      if (pc.connectionState !== "connected") {
+        onConnectionState(s, pc);
+      }
+    } else if (pc.iceConnectionState === "failed") {
+      onConnectionState(s, pc);
+    }
+  };
   return pc;
 }
 

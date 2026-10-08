@@ -26,7 +26,10 @@ config :realtime_chat, :ice,
   turn_host: System.get_env("TURN_HOST"),
   turn_port: String.to_integer(System.get_env("TURN_PORT", "3478")),
   turns_port: System.get_env("TURNS_PORT"),
-  stun_urls: System.get_env("STUN_URLS")
+  stun_urls: System.get_env("STUN_URLS"),
+  external_turn_urls: System.get_env("EXTERNAL_TURN_URLS"),
+  external_turn_username: System.get_env("EXTERNAL_TURN_USERNAME"),
+  external_turn_credential: System.get_env("EXTERNAL_TURN_CREDENTIAL")
 
 # Must equal the backend's SECRET_KEY: it signs the chat tokens the backend hands out (GET /chat/token).
 config :realtime_chat, :secret_key, System.get_env("SECRET_KEY", "dev-only-change-me")

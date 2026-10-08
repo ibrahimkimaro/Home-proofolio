@@ -65,6 +65,10 @@ services:
       # Calls: signs short-lived TURN credentials; must equal coturn's static-auth-secret below.
       # In production also set TURN_HOST (coturn's public name/IP) and TURNS_PORT=5349 (TLS).
       TURN_SECRET: ${TURN_SECRET:-dev-turn-secret-change-me}
+      TURN_HOST: ${TURN_HOST:-}
+      EXTERNAL_TURN_URLS: ${EXTERNAL_TURN_URLS:-}
+      EXTERNAL_TURN_USERNAME: ${EXTERNAL_TURN_USERNAME:-}
+      EXTERNAL_TURN_CREDENTIAL: ${EXTERNAL_TURN_CREDENTIAL:-}
     depends_on:
       db:
         condition: service_healthy
