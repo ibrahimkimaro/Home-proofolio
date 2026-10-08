@@ -34,6 +34,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
+import { VisitorReturnBar } from "@/components/app/VisitorReturnBar";
+
 export default async function PublicProfilePage({ params }: Props) {
   const { username } = await params;
   const p = await getPublicProfile(username);
@@ -41,6 +43,7 @@ export default async function PublicProfilePage({ params }: Props) {
 
   return (
     <>
+      <VisitorReturnBar profileUsername={p.username} />
       <MyPortfolio publicProfile={p} />
       {/* Star, comment, follow, message, ask for the CV: floating, and hidden for the owner. */}
       <ProfileActions username={p.username} displayName={p.display_name} />

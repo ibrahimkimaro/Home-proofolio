@@ -162,7 +162,7 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
             </button>
           )}
           <Link
-            href="/portfolio/preview"
+            href={p?.username ? `/portfolio/preview?u=${encodeURIComponent(p.username)}` : "/portfolio/preview"}
             target="_blank"
             className="flex h-10 items-center gap-2 rounded-lg bg-ink-700 text-paper px-4 text-[14px] font-semibold hover:opacity-90 transition-opacity"
           >
@@ -462,7 +462,7 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
                 <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
               </div>
               <Link
-                href="/portfolio/preview"
+                href={user?.profile?.username ? `/portfolio/preview?u=${encodeURIComponent(user.profile.username)}` : "/portfolio/preview"}
                 target="_blank"
                 className="flex items-center gap-1 text-xs font-semibold text-ink-900 hover:underline"
               >

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Check, FileText, Loader2, Mail, MessageCircle, Plus, Send, Share2, Sparkles, Star, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, FileText, Home, Loader2, Mail, MessageCircle, Plus, Send, Share2, Sparkles, Star, Trash2, X } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   addComment,
@@ -466,13 +466,25 @@ export function ProfileActions({ username, displayName, preview = false }: { use
     }
   }
   function message() {
-    if (signedIn) router.push(`/chat?to=${encodeURIComponent(username)}`);
-    else setPanel("message");
+    if (!signedIn) return askSignIn(`Sign in to message ${displayName} and chat directly.`, { type: "return" }, returnWith("message"));
+    router.push(`/chat?to=${encodeURIComponent(username)}`);
   }
 
   const firstName = displayName.trim().split(" ")[0] || "Member";
 
   const items = [
+    ...(signedIn
+      ? [
+          {
+            id: "home",
+            label: "My Account",
+            icon: Home,
+            onClick: () => router.push("/home"),
+            active: false,
+            tooltip: "Return to your account home",
+          },
+        ]
+      : []),
     {
       id: "star",
       label: state.liked ? "Starred" : "Star",
@@ -486,7 +498,10 @@ export function ProfileActions({ username, displayName, preview = false }: { use
       id: "comment",
       label: "Comment",
       icon: MessageCircle,
-      onClick: () => setPanel("comments"),
+      onClick: () => {
+        if (!signedIn) return askSignIn(`Sign in to comment on ${displayName}'s portfolio.`, { type: "return" }, returnWith("comment", "#comments"));
+        setPanel("comments");
+      },
       count: state.comment_count,
       active: false,
       tooltip: "Leave notes & feedback",
@@ -511,7 +526,10 @@ export function ProfileActions({ username, displayName, preview = false }: { use
       id: "cv",
       label: "Signed CV",
       icon: FileText,
-      onClick: () => setPanel("cv"),
+      onClick: () => {
+        if (!signedIn) return askSignIn(`Sign in to request ${displayName}'s verified proof-backed CV.`, { type: "return" }, returnWith("cv"));
+        setPanel("cv");
+      },
       active: true,
       tooltip: `Request ${firstName}'s verified proof-backed CV`,
     },

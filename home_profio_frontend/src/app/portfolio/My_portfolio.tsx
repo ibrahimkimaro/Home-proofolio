@@ -181,7 +181,13 @@ export default function MyPortfolio({
       listMyRoles().catch(() => []),
     ]).then(([u, p, w, r]) => {
       if (!active) return;
-      if (u) setUser(u);
+      if (u) {
+        setUser(u);
+        const uname = u.profile?.username || u.username;
+        if (uname && typeof window !== "undefined" && window.location.pathname === "/portfolio/preview" && !window.location.search.includes("u=")) {
+          window.history.replaceState(null, "", `/portfolio/preview?u=${encodeURIComponent(uname)}`);
+        }
+      }
       if (p) setPortfolio(p);
       if (w) setWorks(w.filter((item: Work) => isPublic(item) && kindOf(item) !== "capture"));
       if (r) {
@@ -412,6 +418,16 @@ export default function MyPortfolio({
               {isDarkMode ? <Sun className="h-4 w-4 text-brass" /> : <Moon className="h-4 w-4 text-neutral-800" />}
             </button>
 
+            {publicProfile && (
+              <Link
+                href="/home"
+                className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-blue-600 dark:bg-brass px-3 py-1 text-xs font-bold text-white dark:text-neutral-950 shadow-sm hover:opacity-90 active:scale-95 transition-all"
+                title="Return to your account home"
+              >
+                <span>My Account</span>
+              </Link>
+            )}
+
             <button
               type="button"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -514,6 +530,16 @@ export default function MyPortfolio({
                   exit={{ opacity: 0, y: 10, scale: 0.95 }}
                   className="absolute top-12 right-0 w-56 p-3 rounded-2xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#15171e] shadow-2xl z-50 flex flex-col gap-1 text-sm font-bold lg:hidden"
                 >
+                  {publicProfile && (
+                    <Link
+                      href="/home"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="p-2 mb-1 rounded-xl bg-blue-600/10 dark:bg-brass/20 text-blue-600 dark:text-brass font-bold hover:bg-blue-600/20 transition-colors flex items-center justify-between"
+                    >
+                      <span>Return to My Account</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </Link>
+                  )}
                   <a href="#home" onClick={() => setMobileMenuOpen(false)} className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors">
                     Home
                   </a>

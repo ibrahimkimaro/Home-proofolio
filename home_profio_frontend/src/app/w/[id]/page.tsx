@@ -17,6 +17,7 @@ import { KINDS, kindOf, stateLabel } from "@/lib/items";
 import { Card, PublicAvatar, PublicFooter, PublicHeader, SectionTitle } from "@/components/app/PublicChrome";
 import { FollowButton } from "@/components/app/FollowButton";
 import { WorkEngagement } from "@/components/app/Engage";
+import { VisitorReturnBar } from "@/components/app/VisitorReturnBar";
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -63,6 +64,7 @@ export default async function PublicWorkPage({ params }: Props) {
 
   return (
     <div className="theme-mono pf-ambient min-h-screen bg-paper text-ink-800">
+      <VisitorReturnBar profileUsername={owner.username} />
       <PublicHeader />
       <main className="mx-auto max-w-3xl space-y-5 px-4 pt-4 sm:px-8">
         {/* Sleek Breadcrumb Navigation */}
