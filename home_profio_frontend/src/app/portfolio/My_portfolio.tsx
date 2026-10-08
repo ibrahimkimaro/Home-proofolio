@@ -43,6 +43,7 @@ import { ShareCardButton } from "@/components/app/ShareCard";
 import { CommunitySection } from "@/components/app/Engage";
 import { ContactRows, SocialPills } from "@/components/app/ContactLinks";
 import { allContacts } from "@/lib/contact";
+import { PortfolioShimmer } from "@/components/portfolio/PortfolioShimmer";
 import {
   fetchCurrentUser,
   fetchPortfolio,
@@ -91,6 +92,13 @@ export default function MyPortfolio({
   initialRoles,
   publicProfile,
 }: MyPortfolioProps) {
+  // Loading state: shows shimmering skeleton while fetching client data
+  const [loading, setLoading] = useState<boolean>(() => {
+    if (publicProfile) return false;
+    if (initialUser && initialPortfolio) return false;
+    return true;
+  });
+
   // State
   const [user, setUser] = useState<Partial<User> | null>(() => {
     if (publicProfile) {
@@ -189,6 +197,9 @@ export default function MyPortfolio({
           }))
         );
       }
+      setLoading(false);
+    }).catch(() => {
+      if (active) setLoading(false);
     });
 
     return () => {
@@ -321,6 +332,10 @@ export default function MyPortfolio({
     (appearance?.theme === "system" &&
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+  if (loading) {
+    return <PortfolioShimmer />;
+  }
 
   return (
     <div className="w-full min-h-screen bg-[#F8F9FA] dark:bg-[#0B0D13] text-neutral-900 dark:text-neutral-100 selection:bg-neutral-900 selection:text-white transition-colors duration-300 relative overflow-x-hidden font-sans">

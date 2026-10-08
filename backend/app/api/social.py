@@ -93,7 +93,7 @@ async def unfollow(kind: Target, key: str, user: User = Depends(get_current_user
 @router.get("/search")
 async def search(
     q: str = Query("", max_length=100),
-    type: Literal["all", "people", "work", "businesses", "skills"] = "all",
+    type: Literal["all", "people", "work", "businesses", "skills", "discussions"] = "all",
     db: AsyncSession = Depends(get_db),
 ):
     """Public items only. Unlisted and private are never searched (NFR-10, rule 3)."""
@@ -141,6 +141,38 @@ async def search(
             .group_by(skill.c.value).order_by(func.count().desc()).limit(20)
         )
         out["skills"] = [{"name": n, "works": c} for n, c in rows.all()]
+
+    if type in ("all", "discussions"):
+        from app.models.discussion import Discussion, DiscussionReply, DiscussionVote
+        d_rows = (await db.execute(
+            select(Discussion, User, Profile)
+            .join(User, User.id == Discussion.user_id)
+            .outerjoin(Profile, Profile.user_id == User.id)
+            .where(Discussion.access_type == "open", or_(Discussion.title.ilike(term), Discussion.content.ilike(term), cast(Discussion.tags, String).ilike(term)))
+            .order_by(Discussion.created_at.desc()).limit(20)
+        )).all()
+        disc_list = []
+        for disc, usr, prof in d_rows:
+            author_name = (prof.display_name if prof and prof.display_name else usr.fullname) or usr.username
+            reply_c = await db.scalar(select(func.count(DiscussionReply.id)).where(DiscussionReply.discussion_id == disc.id)) or 0
+            vote_c = await db.scalar(select(func.count(DiscussionVote.id)).where(DiscussionVote.discussion_id == disc.id)) or 0
+            disc_list.append({
+                "id": str(disc.id),
+                "title": disc.title,
+                "content": disc.content[:200] + ("..." if len(disc.content) > 200 else ""),
+                "category": disc.category,
+                "tags": disc.tags,
+                "created_at": disc.created_at.isoformat(),
+                "replies": reply_c,
+                "upvotes": vote_c,
+                "author": {
+                    "name": author_name,
+                    "username": usr.username,
+                    "avatar": sign(prof.avatar_url) if prof and prof.avatar_url else None,
+                }
+            })
+        out["discussions"] = disc_list
+
     return out
 
 

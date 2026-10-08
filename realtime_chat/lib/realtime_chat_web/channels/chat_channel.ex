@@ -12,8 +12,8 @@ defmodule RealtimeChatWeb.ChatChannel do
   @max_len 4000
   @join_page 100
   @older_page 100
-  # How long after sending a member may still edit a message (a typo fix, not rewriting history).
-  @edit_window 3600
+  # How long after sending a member may still edit a message.
+  @edit_window 86400 * 30
   # Per user across all tabs and chats: bursts of 30 messages, then 1 every 0.5s on average.
   @msg_burst 30
   @msg_per_sec 2

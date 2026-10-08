@@ -18,8 +18,10 @@ import {
   Moon,
   Palette,
   Plus,
+  Sliders,
   Sun,
   Trash2,
+  Users,
 } from "lucide-react";
 import {
   readAppearance,
@@ -30,7 +32,9 @@ import {
   type ThemeChoice,
 } from "@/lib/appearance";
 import {
+  fetchCvRequests,
   fetchPortfolio,
+  fetchVisitorMessages,
   listMyRoles,
   listWork,
   savePortfolio,
@@ -76,11 +80,19 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
   const [error, setError] = useState<string | null>(null);
   const [appearance, setAppearance] = useState<Appearance | null>(null);
 
+  const [activeTab, setActiveTab] = useState<"customize" | "activity">("customize");
+  const [pendingInquiries, setPendingInquiries] = useState(0);
+
   useEffect(() => {
     setAppearance(readAppearance());
     fetchPortfolio().then((p) => (setSaved(p), setS(p))).catch(() => setError("Couldn't load your portfolio settings"));
     listWork().then((all) => setWorks(all.filter((w) => isPublic(w) && kindOf(w) !== "capture"))).catch(() => { });
     listMyRoles().then((r) => setRoleTitles(r.filter((x) => x.current).map((x) => x.title))).catch(() => { });
+    Promise.all([fetchCvRequests(), fetchVisitorMessages()])
+      .then(([r, m]) => {
+        setPendingInquiries(r.filter((x) => x.status === "pending").length + m.filter((x) => !x.read).length);
+      })
+      .catch(() => {});
   }, []);
 
   function updateTheme(theme: ThemeChoice) {
@@ -136,8 +148,8 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
     <div className=" max-w-full px-4 pt-6 sm:px-6 md:pt-8">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3 px-1">
         <div>
-          <h1 className="text-[26px] font-bold tracking-tight sm:text-[30px]">Portfolio</h1>
-          <p className="mt-1 text-[14px] text-slate">Shape what visitors see. Only items you made Public appear here.</p>
+          <h1 className="text-[26px] font-bold tracking-tight sm:text-[30px]">Portfolio Studio</h1>
+          <p className="mt-1 text-[14px] text-slate">Shape what visitors see. Only items you made Public appear on your live profile.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {!isLive && (
@@ -166,12 +178,80 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
         </div>
       </div>
 
-      <EngagementPanel />
+      {/* Tab Navigation */}
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-hairline/60 pb-3">
+        <div className="inline-flex items-center gap-1.5 rounded-xl bg-paper-dim p-1 text-sm font-semibold">
+          <button
+            type="button"
+            onClick={() => setActiveTab("customize")}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${
+              activeTab === "customize"
+                ? "bg-paper text-ink-900 shadow-xs"
+                : "text-slate hover:text-ink-800"
+            }`}
+          >
+            <Sliders className="h-4 w-4" />
+            <span>Customize & Layout</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("activity")}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${
+              activeTab === "activity"
+                ? "bg-paper text-ink-900 shadow-xs"
+                : "text-slate hover:text-ink-800"
+            }`}
+          >
+            <Users className="h-4 w-4" />
+            <span>Audience & Activity</span>
+            {pendingInquiries > 0 && (
+              <span className="rounded-full bg-brass px-1.5 py-0.5 text-[10px] font-bold text-white">
+                {pendingInquiries}
+              </span>
+            )}
+          </button>
+        </div>
 
-      <div className="grid gap-4 lg:grid-cols-12">
+        <div className="flex items-center gap-2 text-xs text-slate">
+          <span className={`inline-block h-2 w-2 rounded-full ${isLive ? "bg-emerald-500" : "bg-amber-500"}`} />
+          <span>{isLive ? "Publicly live" : "Private portfolio"}</span>
+        </div>
+      </div>
+
+      {/* Pending inquiries alert banner if currently on customize tab */}
+      {pendingInquiries > 0 && activeTab === "customize" && (
+        <div className="mb-6 flex items-center justify-between gap-3 rounded-xl border border-brass/30 bg-brass/10 px-4 py-2.5 text-[13px] text-ink-900">
+          <span className="flex items-center gap-2 font-medium">
+            <span className="h-2 w-2 rounded-full bg-brass animate-pulse" />
+            You have {pendingInquiries} pending visitor {pendingInquiries === 1 ? "inquiry" : "inquiries"} (CV requests or messages).
+          </span>
+          <button
+            type="button"
+            onClick={() => setActiveTab("activity")}
+            className="font-bold underline hover:opacity-80 cursor-pointer"
+          >
+            View in Activity →
+          </button>
+        </div>
+      )}
+
+      {activeTab === "activity" ? (
+        <EngagementPanel onPendingCount={setPendingInquiries} />
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-12">
         {/* Settings */}
         <div className="space-y-4 lg:col-span-5">
-          <section className={card}>
+          {/* Quick Jump Navigation Chips on Laptop */}
+          <div className="flex flex-wrap items-center gap-1.5 pb-0.5">
+            <a href="#hero-sec" className="rounded-md bg-paper-dim px-2.5 py-1 text-[11px] font-bold text-slate hover:text-ink-900 transition-colors">Hero</a>
+            <a href="#roles-sec" className="rounded-md bg-paper-dim px-2.5 py-1 text-[11px] font-bold text-slate hover:text-ink-900 transition-colors">Roles</a>
+            <a href="#sections-sec" className="rounded-md bg-paper-dim px-2.5 py-1 text-[11px] font-bold text-slate hover:text-ink-900 transition-colors">Sections</a>
+            <a href="#featured-sec" className="rounded-md bg-paper-dim px-2.5 py-1 text-[11px] font-bold text-slate hover:text-ink-900 transition-colors">Featured ({s.featured.length}/6)</a>
+            <a href="#contact-sec" className="rounded-md bg-paper-dim px-2.5 py-1 text-[11px] font-bold text-slate hover:text-ink-900 transition-colors">Contact</a>
+            <a href="#theme-sec" className="rounded-md bg-paper-dim px-2.5 py-1 text-[11px] font-bold text-slate hover:text-ink-900 transition-colors">Theme</a>
+          </div>
+
+          <section id="hero-sec" className={`${card} scroll-mt-24`}>
             <label htmlFor="tagline" className={label}>
               Hero statement
             </label>
@@ -187,7 +267,7 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
             <p className="mt-1 text-right text-[12px] tabular-nums text-slate">{(s.tagline ?? "").length}/200</p>
           </section>
 
-          <section className={card}>
+          <section id="roles-sec" className={`${card} scroll-mt-24`}>
             <div className="mb-2 flex items-baseline justify-between">
               <span className={label}>Rotating roles</span>
               {roleTitles.length > 0 && (
@@ -224,7 +304,7 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
             )}
           </section>
 
-          <section className={card}>
+          <section id="sections-sec" className={`${card} scroll-mt-24`}>
             <span className={label}>Sections</span>
             <ul className="divide-y divide-hairline">
               {order.map((sec, i) => {
@@ -253,7 +333,7 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
             </ul>
           </section>
 
-          <section className={card}>
+          <section id="featured-sec" className={`${card} scroll-mt-24`}>
             <div className="mb-2 flex items-baseline justify-between">
               <span className={label}>Featured works</span>
               <span className="text-[12px] tabular-nums text-slate">{s.featured.length}/6</span>
@@ -261,7 +341,7 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
             {works.length === 0 ? (
               <p className="text-[13px] text-slate">Nothing public yet. Publish from Home or Work to feature it here.</p>
             ) : (
-              <ul className="space-y-1">
+              <ul className="space-y-1 max-h-60 overflow-y-auto pr-1">
                 {works.map((w) => {
                   const on = s.featured.includes(w.id);
                   const full = !on && s.featured.length >= 6;
@@ -291,7 +371,7 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
             )}
           </section>
 
-          <section className={`${card} space-y-4`}>
+          <section id="metrics-sec" className={`${card} space-y-4 scroll-mt-24`}>
             <label className="flex cursor-pointer items-center justify-between gap-4">
               <span>
                 <span className="block text-[14px] font-semibold">Show metrics</span>
@@ -308,7 +388,7 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
             </div>
           </section>
 
-          <section className={`${card} space-y-4`}>
+          <section id="contact-sec" className={`${card} space-y-4 scroll-mt-24`}>
             <div>
               <h2 className="text-[15px] font-bold">Contact &amp; social</h2>
               <p className="text-[12px] text-slate">Everything you add here shows in your portfolio&apos;s contact area. Remove it and it disappears.</p>
@@ -324,7 +404,7 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
           </section>
 
           {/* Theme & Palette Comfort Tone */}
-          <section className={`${card} space-y-4`}>
+          <section id="theme-sec" className={`${card} space-y-4 scroll-mt-24`}>
             <div>
               <span className={label}>Portfolio Theme & Comfort Tone</span>
               <p className="text-[12px] text-slate mb-3">Choose the aesthetic and eye-comfort tone for your portfolio.</p>
@@ -375,100 +455,164 @@ function Customize({ user, onProfile }: { user: User; onProfile: (p: Profile) =>
 
         {/* Live structural preview */}
         <div className="lg:col-span-7">
-          <div className="lg:sticky lg:top-20">
-            <p className="mb-2 px-1 text-[13px] font-semibold text-slate">Preview</p>
-            <Preview user={user} s={s} works={works} />
+          <div className="lg:sticky lg:top-24 flex flex-col">
+            <div className="mb-2 flex items-center justify-between px-1">
+              <div className="flex items-center gap-2 text-[13px] font-semibold text-slate">
+                <span>Interactive Live Preview</span>
+                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              </div>
+              <Link
+                href="/portfolio/preview"
+                target="_blank"
+                className="flex items-center gap-1 text-xs font-semibold text-ink-900 hover:underline"
+              >
+                <span>Full screen preview</span>
+                <ArrowUpRight className="h-3 w-3" />
+              </Link>
+            </div>
+            <div className="overflow-hidden pf-surface rounded-2xl border border-hairline bg-paper shadow-sm flex flex-col lg:max-h-[calc(100vh-8.5rem)]">
+              <Preview user={user} s={s} works={works} roleTitles={roleTitles} />
+            </div>
           </div>
         </div>
       </div>
+      )}
 
       {/* Save bar */}
-      <div className="sticky bottom-20 z-20 mt-6 md:bottom-4">
-        <div className={`mx-auto flex max-w-xl items-center gap-3 rounded-xl border border-hairline bg-paper/95 p-2 pl-4 shadow-md backdrop-blur transition-opacity ${dirty || error ? "opacity-100" : "pointer-events-none opacity-0"}`}>
-          <p className={`flex-1 text-[13px] ${error ? "text-berry" : "text-slate"}`}>{error ?? "You have unsaved changes"}</p>
-          <button type="button" onClick={() => setS(saved)} className="h-9 rounded-lg px-3 text-[13px] text-slate cursor-pointer">
-            Discard
-          </button>
-          <button type="button" onClick={save} disabled={busy} className="flex h-9 items-center gap-2 rounded-lg bg-ink px-4 text-[13px] font-semibold text-paper disabled:opacity-60 cursor-pointer">
-            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            Save
-          </button>
+      {activeTab === "customize" && (
+        <div className="sticky bottom-20 z-20 mt-6 md:bottom-4">
+          <div className={`mx-auto flex max-w-xl items-center gap-3 rounded-xl border border-hairline bg-paper/95 p-2 pl-4 shadow-md backdrop-blur transition-opacity ${dirty || error ? "opacity-100" : "pointer-events-none opacity-0"}`}>
+            <p className={`flex-1 text-[13px] ${error ? "text-berry" : "text-slate"}`}>{error ?? "You have unsaved changes"}</p>
+            <button type="button" onClick={() => setS(saved)} className="h-9 rounded-lg px-3 text-[13px] text-slate cursor-pointer">
+              Discard
+            </button>
+            <button type="button" onClick={save} disabled={busy} className="flex h-9 items-center gap-2 rounded-lg bg-ink px-4 text-[13px] font-semibold text-paper disabled:opacity-60 cursor-pointer">
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              Save
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-function Preview({ user, s, works }: { user: User; s: PortfolioSettings; works: Work[] }) {
+function Preview({ user, s, works, roleTitles }: { user: User; s: PortfolioSettings; works: Work[]; roleTitles: string[] }) {
   const p = user.profile;
-  const featured = [...s.featured.map((id) => works.find((w) => w.id === id)).filter(Boolean), ...works.filter((w) => !s.featured.includes(w.id))] as Work[];
+  const featured = [
+    ...s.featured.map((id) => works.find((w) => w.id === id)).filter(Boolean),
+    ...works.filter((w) => !s.featured.includes(w.id)),
+  ] as Work[];
   const isLive = p.visibility === "public" || p.visibility === "unlisted";
+
   const block = (sec: PortfolioSection) => {
     switch (sec) {
       case "about":
-        return p.bio ? <p className="text-[13px] leading-relaxed text-slate">{p.bio}</p> : <p className="text-[12px] italic text-slate">Add a bio on your Profile to fill this.</p>;
-      case "experience":
-        return (
-          <div className="relative mx-auto h-16 max-w-xs">
-            <span className="absolute left-1/2 top-0 h-full w-px bg-hairline" />
-            {[0, 1].map((k) => (
-              <span key={k} className="absolute h-5 w-[42%] rounded-md border border-hairline bg-paper-dim" style={{ top: k * 30 + 4, [k ? "right" : "left"]: 0 }} />
-            ))}
-          </div>
+        return p.bio ? (
+          <p className="text-[13px] leading-relaxed text-ink-800">{p.bio}</p>
+        ) : (
+          <p className="text-[12px] italic text-slate">Add a bio on your Profile to fill this.</p>
         );
-      case "works":
-        return featured.length ? (
-          <div className="grid grid-cols-3 gap-2">
-            {featured.slice(0, 3).map((w) => (
-              <div key={w.id} className="rounded-lg border border-hairline p-2">
-                <div className="mb-1.5 aspect-[4/3] rounded-md bg-paper-dim" />
-                <p className="truncate text-[11px] font-semibold">{w.title}</p>
-                <p className="text-[10px] text-slate">{stateLabel(w.status)}</p>
+      case "experience": {
+        const rolesToShow = roleTitles.length > 0 ? roleTitles.slice(0, 4) : s.roles.filter(Boolean).slice(0, 4);
+        return rolesToShow.length > 0 ? (
+          <div className="space-y-2">
+            {rolesToShow.map((role, idx) => (
+              <div key={idx} className="flex items-center gap-2.5 rounded-lg border border-hairline/60 bg-paper-dim/30 px-3 py-2 text-[12px]">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                <span className="font-semibold text-ink-900 truncate">{role}</span>
+                <span className="text-slate text-[11px] ml-auto">Active</span>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-[12px] italic text-slate">No public work yet.</p>
+          <p className="text-[12px] italic text-slate">Add rotating roles to showcase experience.</p>
+        );
+      }
+      case "works":
+        return featured.length ? (
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+            {featured.slice(0, 6).map((w) => (
+              <div
+                key={w.id}
+                className="rounded-xl border border-hairline/80 bg-paper-dim/30 p-3 transition-all hover:border-ink/40"
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate">
+                    {KINDS.find((k) => k.id === kindOf(w))?.label ?? "Work"}
+                  </span>
+                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                    {stateLabel(w.status)}
+                  </span>
+                </div>
+                <p className="line-clamp-2 text-[12px] font-bold text-ink-900 leading-snug">{w.title}</p>
+                {w.skills.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {w.skills.slice(0, 2).map((sk) => (
+                      <span key={sk} className="rounded bg-paper px-1.5 py-0.5 text-[9px] text-slate border border-hairline">
+                        {sk}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[12px] italic text-slate">No public work featured yet.</p>
         );
       case "contact":
         return (
-          <p className="text-[13px]">
-            {s.contact_email || (s.contacts ?? []).length || (s.socials ?? []).length ? (
-              <>
-                {s.contact_email}
-                {(s.contacts ?? []).length > 0 && <span className="text-slate">{s.contact_email ? " + " : ""}{(s.contacts ?? []).length} more</span>}
-                {(s.socials ?? []).length > 0 && <span className="text-slate"> · {(s.socials ?? []).length} social</span>}
-              </>
-            ) : (
-              <span className="italic text-slate">Follow button only — no contact shown.</span>
+          <div className="flex flex-wrap gap-2 text-[12px]">
+            {s.contact_email && (
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-hairline bg-paper-dim/40 px-3 py-1 font-semibold text-ink-900">
+                ✉ {s.contact_email}
+              </span>
             )}
-          </p>
+            {(s.contacts ?? []).map((c, i) => (
+              <span key={i} className="inline-flex items-center gap-1.5 rounded-lg border border-hairline bg-paper-dim/40 px-3 py-1 text-slate">
+                {c.label}: {c.value}
+              </span>
+            ))}
+            {(s.socials ?? []).map((soc, i) => (
+              <span key={i} className="inline-flex items-center gap-1 rounded-lg border border-hairline bg-paper-dim/40 px-3 py-1 text-slate capitalize">
+                {soc.platform}
+              </span>
+            ))}
+            {!s.contact_email && (s.contacts ?? []).length === 0 && (s.socials ?? []).length === 0 && (
+              <span className="italic text-slate">Follow button only — no direct contact displayed.</span>
+            )}
+          </div>
         );
     }
   };
 
   return (
-    <div className="overflow-hidden  pf-surface rounded-2xl border border-hairline bg-paper shadow-sm">
-      <div className="flex items-center justify-between border-b border-hairline px-4 py-2.5 text-[12px] text-slate">
-        <span className="flex items-center gap-1.5">
-          {isLive ? <Globe className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}/u/{p.username}
+    <>
+      <div className="flex items-center justify-between border-b border-hairline px-4 py-2 text-[12px] text-slate bg-paper-dim/40 shrink-0">
+        <span className="flex items-center gap-1.5 font-medium">
+          {isLive ? <Globe className="h-3.5 w-3.5 text-emerald-600" /> : <Lock className="h-3.5 w-3.5 text-amber-600" />}
+          /u/{p.username}
         </span>
-        <Link href={`/u/${p.username}`} target="_blank" className="flex items-center gap-0.5 font-medium text-ink-800 hover:underline">
-          Open <ArrowUpRight className="h-3.5 w-3.5" />
+        <Link href={`/u/${p.username}`} target="_blank" className="flex items-center gap-1 font-semibold text-ink-800 hover:underline">
+          Visit live <ArrowUpRight className="h-3.5 w-3.5" />
         </Link>
       </div>
-      <div className="space-y-6 p-6">
-        <div className="flex items-start gap-5">
+
+      <div className="overflow-y-auto p-5 sm:p-6 space-y-6 flex-1">
+        <div className="flex items-start gap-4">
           <div className="min-w-0 flex-1">
             <p className="text-[12px] text-slate">Hi, I&apos;m</p>
-            <p className="text-[24px] font-bold leading-tight tracking-tight">{displayName(user)}</p>
-            <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-slate">{(s.roles.filter(Boolean).length ? s.roles.filter(Boolean) : [p.headline ?? ""]).join(" • ")}</p>
-            {s.tagline && <p className="mt-3 text-[14px] leading-relaxed">{s.tagline}</p>}
+            <p className="text-[22px] font-bold leading-tight tracking-tight text-ink-900">{displayName(user)}</p>
+            <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-slate">
+              {(s.roles.filter(Boolean).length ? s.roles.filter(Boolean) : [p.headline ?? ""]).join(" • ")}
+            </p>
+            {s.tagline && <p className="mt-2.5 text-[13px] leading-relaxed text-ink-800">{s.tagline}</p>}
           </div>
           <div className="hidden w-36 shrink-0 rounded-xl border border-hairline p-3 sm:block">
-            <Avatar name={displayName(user)} src={p.avatar_url} className="mx-auto h-16 w-16 text-[18px]" />
+            <Avatar name={displayName(user)} src={p.avatar_url} className="mx-auto h-14 w-14 text-[16px]" />
             {s.show_metrics && (
-              <ul className="mt-3 space-y-1.5 text-[11px]">
+              <ul className="mt-2.5 space-y-1.5 text-[10px]">
                 {[
                   [Clock, "Years active"],
                   [Award, "Top credential"],
@@ -476,8 +620,8 @@ function Preview({ user, s, works }: { user: User; s: PortfolioSettings; works: 
                 ].map(([Icon, text], i) => {
                   const I = Icon as typeof Clock;
                   return (
-                    <li key={i} className="flex items-center gap-1.5 rounded-md border border-hairline px-2 py-1">
-                      <I className="h-3 w-3" /> {text as string}
+                    <li key={i} className="flex items-center gap-1.5 rounded-md border border-hairline px-2 py-0.5 text-slate">
+                      <I className="h-3 w-3 text-emerald-600" /> {text as string}
                     </li>
                   );
                 })}
@@ -485,14 +629,15 @@ function Preview({ user, s, works }: { user: User; s: PortfolioSettings; works: 
             )}
           </div>
         </div>
+
         {s.sections.map((sec) => (
-          <div key={sec}>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate">{SECTION_LABEL[sec]}</p>
+          <div key={sec} className="border-t border-hairline/50 pt-4">
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate">{SECTION_LABEL[sec]}</p>
             {block(sec)}
           </div>
         ))}
-        {s.sections.length === 0 && <p className="text-[13px] text-slate">All sections are hidden.</p>}
+        {s.sections.length === 0 && <p className="text-[13px] text-slate italic">All sections are hidden.</p>}
       </div>
-    </div>
+    </>
   );
 }

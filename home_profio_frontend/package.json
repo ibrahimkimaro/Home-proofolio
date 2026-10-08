@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev -H 0.0.0.0 --webpack",
-    "build": "next build --webpack",
-    "build:test": "cross-env NEXT_DIST_DIR=.next_test next build --webpack",
+    "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 next build --webpack",
+    "build:test": "cross-env NODE_OPTIONS=--max-old-space-size=4096 NEXT_DIST_DIR=.next_test next build --webpack",
     "start": "next start",
     "start:test": "cross-env NEXT_DIST_DIR=.next_test next start -p 3001 -H 0.0.0.0",
     "analyze": "cross-env ANALYZE=true next build --webpack",
@@ -19,7 +19,9 @@
     "phoenix": "^1.8.15",
     "qrcode": "^1.5.4",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "recharts": "^3.10.1",
+    "thinking-orbs": "^0.3.2"
   },
   "devDependencies": {
     "@next/bundle-analyzer": "^16.3.8",

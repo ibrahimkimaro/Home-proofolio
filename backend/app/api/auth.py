@@ -4,7 +4,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Body, Cookie, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,7 @@ from app.models.user import User
 from app.schemas.auth import (
     USERNAME_RE,
     LoginRequest,
+    LogoutRequest,
     RegisterRequest,
     ActivationStatus,
     UserOut,
@@ -389,10 +390,27 @@ async def verify_account(
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
     response: Response,
+    request: Request,
+    payload: LogoutRequest | None = Body(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
 ):
+    if payload and (payload.rating is not None or payload.feedback):
+        record(
+            db,
+            "logout_feedback",
+            request,
+            user_id=current_user.id,
+            email=current_user.email,
+            details={
+                "rating": payload.rating,
+                "feedback": payload.feedback[:1000] if payload.feedback else None,
+            },
+        )
+    else:
+        record(db, "logout", request, user_id=current_user.id, email=current_user.email)
+
     await db.execute(
         SessionModel.__table__.delete().where(
             SessionModel.token_hash == hash_session_token(session_token)

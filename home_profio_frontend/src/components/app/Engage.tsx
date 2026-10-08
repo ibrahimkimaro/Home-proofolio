@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Check, FileText, Loader2, Mail, MessageCircle, Plus, Send, Share2, Star, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, FileText, Loader2, Mail, MessageCircle, Plus, Send, Share2, Sparkles, Star, Trash2, X } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   addComment,
   askForCv,
@@ -418,12 +419,13 @@ type Panel = null | "comments" | "cv" | "message";
  * The buttons floating on someone's portfolio: star, comment, follow, message, ask for the CV. A column at the right of
  * larger screens, a bar along the bottom of phones. Hidden for the owner.
  */
-export function ProfileActions({ username, displayName }: { username: string; displayName: string }) {
+export function ProfileActions({ username, displayName, preview = false }: { username: string; displayName: string; preview?: boolean }) {
   const router = useRouter();
   const { state, setState } = useEngage("profile", username);
   const [following, setFollowing] = useState<boolean | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [gate, setGate] = useState<Gate>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const resume = useResume();
   const resumed = useRef(false);
 
@@ -445,7 +447,7 @@ export function ProfileActions({ username, displayName }: { username: string; di
     if (open) setTimeout(() => setPanel(open), 0);
   }, [state, resume]);
 
-  if (!state || state.self) return null;
+  if (!state || (state.self && !preview)) return null;
   const signedIn = state.signed_in;
   const askSignIn = (reason: string, action: ParkedAction, returnTo: string) => setGate({ reason, action, returnTo });
 
@@ -468,46 +470,247 @@ export function ProfileActions({ username, displayName }: { username: string; di
     else setPanel("message");
   }
 
-  const items: { id: string; label: string; icon: typeof Star; onClick: () => void; count?: number; active?: boolean }[] = [
-    { id: "star", label: state.liked ? "Starred" : "Star", icon: Star, onClick: star, count: state.likes, active: state.liked },
-    { id: "comment", label: "Comment", icon: MessageCircle, onClick: () => setPanel("comments"), count: state.comment_count },
-    { id: "follow", label: following ? "Following" : "Follow", icon: following ? Check : Plus, onClick: follow, active: !!following },
-    { id: "message", label: "Message", icon: Mail, onClick: message },
-    { id: "cv", label: "Ask for CV", icon: FileText, onClick: () => (setPanel("cv")) },
+  const firstName = displayName.trim().split(" ")[0] || "Member";
+
+  const items = [
+    {
+      id: "star",
+      label: state.liked ? "Starred" : "Star",
+      icon: Star,
+      onClick: star,
+      count: state.likes,
+      active: state.liked,
+      tooltip: state.liked ? `You endorsed ${firstName}` : `Star ${firstName}'s portfolio`,
+    },
+    {
+      id: "comment",
+      label: "Comment",
+      icon: MessageCircle,
+      onClick: () => setPanel("comments"),
+      count: state.comment_count,
+      active: false,
+      tooltip: "Leave notes & feedback",
+    },
+    {
+      id: "follow",
+      label: following ? "Following" : "Follow",
+      icon: following ? Check : Plus,
+      onClick: follow,
+      active: !!following,
+      tooltip: following ? "Following for updates" : `Follow ${firstName}`,
+    },
+    {
+      id: "message",
+      label: "Message",
+      icon: Mail,
+      onClick: message,
+      active: false,
+      tooltip: `Direct message ${firstName}`,
+    },
+    {
+      id: "cv",
+      label: "Signed CV",
+      icon: FileText,
+      onClick: () => setPanel("cv"),
+      active: true,
+      tooltip: `Request ${firstName}'s verified proof-backed CV`,
+    },
   ];
 
   return (
     <>
-      <nav
+      {/* ============================================================
+          DESKTOP / LAPTOP VIEW: Sleek Vertical Floating Dock on Right Edge
+          ============================================================ */}
+      <motion.nav
         aria-label={`Engage with ${displayName}`}
-        className="fixed inset-x-3 bottom-3 z-40 flex justify-around gap-1 rounded-2xl border border-hairline bg-paper/95 p-1.5 shadow-xl backdrop-blur-md pb-[max(0.375rem,env(safe-area-inset-bottom))] sm:inset-x-auto sm:left-1/2 sm:w-auto sm:-translate-x-1/2 sm:justify-center md:left-auto md:right-5 md:top-1/2 md:bottom-auto md:w-14 md:translate-x-0 md:-translate-y-1/2 md:flex-col md:gap-2 md:rounded-full md:p-2"
+        initial={{ x: 30, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+        className="hidden md:flex fixed right-6 bottom-10 z-40 select-none flex-col items-end"
       >
-        {items.map((it) => (
-          <button
-            key={it.id}
-            type="button"
-            onClick={it.onClick}
-            aria-label={it.label}
-            aria-pressed={it.active}
-            title={it.label}
-            className={`group relative flex min-h-12 min-w-12 flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[10px] font-semibold transition-colors sm:flex-none sm:px-3 md:h-12 md:w-12 md:min-w-0 md:flex-none md:rounded-full md:p-0 ${
-              it.active ? "bg-ink text-paper" : "text-ink-800 hover:bg-paper-dim"
-            }`}
-          >
-            <it.icon className={`h-5 w-5 ${it.id === "star" && it.active ? "fill-current" : ""}`} />
-            <span className="md:hidden">{it.label}</span>
-            {!!it.count && (
-              <span className="absolute right-1 top-0.5 min-w-[18px] rounded-full bg-brass px-1 text-center text-[10px] font-bold leading-[18px] text-white md:-right-1 md:-top-1">
-                {it.count > 99 ? "99+" : it.count}
-              </span>
+        <div className="relative flex flex-col items-center gap-2 rounded-2xl border border-neutral-300/80 dark:border-white/15 bg-white/90 dark:bg-[#12141c]/90 text-neutral-900 dark:text-white p-2 shadow-[0_20px_50px_rgba(0,0,0,0.25),0_0_25px_rgba(201,162,39,0.14)] backdrop-blur-2xl ring-1 ring-black/5 dark:ring-white/10">
+          {/* Subtle Ambient Pulse Ring */}
+          <div className="pointer-events-none absolute -inset-0.5 rounded-2xl bg-gradient-to-b from-amber-500/20 via-brass/30 to-emerald-500/20 opacity-50 blur-xs animate-pulse" />
+
+          {/* Top Brand/Creator Indicator */}
+          <div className="relative pb-1.5 border-b border-neutral-200/80 dark:border-white/10 flex items-center justify-center w-full" title={`Creator: ${displayName}`}>
+            <Sparkles className="h-4 w-4 text-amber-500 animate-pulse" />
+          </div>
+
+          {/* Vertical Action Buttons */}
+          <div className="relative flex flex-col items-center gap-2">
+            {items.map((it) => {
+              const isCv = it.id === "cv";
+              const isStar = it.id === "star";
+              const isFollow = it.id === "follow";
+
+              return (
+                <div key={it.id} className="relative group">
+                  <motion.button
+                    type="button"
+                    onClick={it.onClick}
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.92 }}
+                    aria-label={it.label}
+                    aria-pressed={it.active}
+                    className={`relative flex items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      isCv
+                        ? "bg-gradient-to-tr from-amber-500 via-brass to-amber-400 text-neutral-950 font-black shadow-md shadow-amber-500/30 hover:brightness-110 ring-2 ring-amber-400/40"
+                        : it.active
+                        ? isStar
+                          ? "bg-gradient-to-tr from-amber-500 to-amber-400 text-neutral-950 font-black shadow-sm"
+                          : isFollow
+                          ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/40"
+                          : "bg-neutral-900 text-white dark:bg-white dark:text-neutral-950"
+                        : "text-neutral-700 dark:text-neutral-300 hover:text-neutral-950 dark:hover:text-white hover:bg-neutral-200/60 dark:hover:bg-white/10 border border-neutral-200/50 dark:border-white/5"
+                    }`}
+                  >
+                    <it.icon
+                      className={`h-4.5 w-4.5 shrink-0 transition-transform group-hover:scale-110 ${
+                        isStar && it.active ? "fill-current text-neutral-950" : ""
+                      } ${isCv ? "text-neutral-950" : ""}`}
+                    />
+
+                    {/* Badge Count if any */}
+                    {typeof it.count === "number" && it.count > 0 && (
+                      <span
+                        className={`absolute -top-1.5 -right-1.5 inline-flex items-center justify-center min-w-[18px] h-4.5 px-1 rounded-full text-[10px] font-black shadow-sm ${
+                          isStar && it.active
+                            ? "bg-neutral-950 text-amber-300 ring-1 ring-amber-400"
+                            : "bg-amber-500 text-neutral-950"
+                        }`}
+                      >
+                        {it.count > 99 ? "99+" : it.count}
+                      </span>
+                    )}
+                  </motion.button>
+
+                  {/* Micro-Tooltip appearing to the LEFT of the button */}
+                  <div className="pointer-events-none absolute right-full top-1/2 -translate-y-1/2 mr-3 hidden group-hover:flex items-center z-50 transition-all opacity-0 group-hover:opacity-100 scale-95 group-hover:scale-100 duration-150">
+                    <div className="whitespace-nowrap rounded-xl bg-neutral-950 text-white dark:bg-[#1a1d28] dark:border dark:border-white/15 px-3 py-1.5 text-[11px] font-semibold shadow-2xl flex items-center gap-1.5">
+                      <span>{it.tooltip}</span>
+                    </div>
+                    <div className="w-2 h-2 -ml-1 rotate-45 bg-neutral-950 dark:bg-[#1a1d28]" />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </motion.nav>
+
+      {/* ============================================================
+          MOBILE VIEW: Floating Action Trigger at Right Corner + Vertical Speed Dial
+          ============================================================ */}
+      <div className="flex md:hidden fixed bottom-6 right-5 z-40 flex-col items-end select-none">
+        {/* Vertical Line of Action Buttons (Speed Dial) */}
+        <AnimatePresence>
+          {mobileOpen && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.85, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.85, y: 15 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+              className="flex flex-col-reverse items-end gap-2.5 mb-3.5"
+            >
+              {items.map((it, idx) => {
+                const isCv = it.id === "cv";
+                const isStar = it.id === "star";
+
+                return (
+                  <motion.div
+                    key={it.id}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ delay: idx * 0.04, duration: 0.2 }}
+                    className="flex items-center gap-2"
+                  >
+                    {/* Action Label Pill */}
+                    <span className="rounded-full bg-neutral-950/85 dark:bg-[#12141c]/90 text-white backdrop-blur-md px-3 py-1 text-[11px] font-semibold shadow-md border border-white/10">
+                      {it.tooltip}
+                    </span>
+
+                    {/* Action Circle Button */}
+                    <motion.button
+                      type="button"
+                      onClick={() => {
+                        it.onClick();
+                        setMobileOpen(false);
+                      }}
+                      whileTap={{ scale: 0.9 }}
+                      aria-label={it.label}
+                      className={`relative flex items-center justify-center w-12 h-12 rounded-full shadow-lg transition-all ${
+                        isCv
+                          ? "bg-gradient-to-r from-amber-500 via-brass to-amber-400 text-neutral-950 font-black shadow-amber-500/30 ring-2 ring-amber-400/50"
+                          : it.active
+                          ? isStar
+                            ? "bg-gradient-to-tr from-amber-500 to-amber-400 text-neutral-950"
+                            : "bg-emerald-600 text-white"
+                          : "bg-neutral-900/90 dark:bg-neutral-800/90 text-white border border-white/15"
+                      }`}
+                    >
+                      <it.icon className={`h-5 w-5 ${isStar && it.active ? "fill-current" : ""}`} />
+
+                      {/* Badge count if any */}
+                      {typeof it.count === "number" && it.count > 0 && (
+                        <span className="absolute -top-1 -left-1 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-black text-[10px] font-black flex items-center justify-center">
+                          {it.count > 99 ? "99+" : it.count}
+                        </span>
+                      )}
+                    </motion.button>
+                  </motion.div>
+                );
+              })}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Floating Action Button (FAB) Trigger */}
+        <motion.button
+          type="button"
+          onClick={() => setMobileOpen((prev) => !prev)}
+          whileHover={{ scale: 1.08 }}
+          whileTap={{ scale: 0.92 }}
+          aria-label={mobileOpen ? "Close actions" : "Engage with creator"}
+          className={`relative flex items-center justify-center w-14 h-14 rounded-full shadow-2xl transition-all cursor-pointer ${
+            mobileOpen
+              ? "bg-neutral-900 dark:bg-neutral-800 text-white border border-white/20 rotate-90"
+              : "bg-gradient-to-tr from-amber-500 via-brass to-amber-400 text-neutral-950 font-black shadow-amber-500/40 ring-4 ring-amber-400/20"
+          }`}
+        >
+          {/* Subtle Ping Pulse when Closed */}
+          {!mobileOpen && (
+            <span className="pointer-events-none absolute inset-0 rounded-full bg-amber-400/40 animate-ping opacity-60" />
+          )}
+
+          <AnimatePresence mode="wait">
+            {mobileOpen ? (
+              <motion.div
+                key="close"
+                initial={{ rotate: -90, opacity: 0 }}
+                animate={{ rotate: 0, opacity: 1 }}
+                exit={{ rotate: 90, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                <X className="w-6 h-6" />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="open"
+                initial={{ scale: 0.6, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.6, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="flex items-center justify-center"
+              >
+                <Sparkles className="w-6 h-6 animate-pulse" />
+              </motion.div>
             )}
-            <span className="pointer-events-none absolute right-full mr-3 hidden whitespace-nowrap rounded-lg bg-ink px-2.5 py-1 text-[12px] font-semibold text-paper opacity-0 shadow-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 md:block">
-              {it.label}
-            </span>
-          </button>
-        ))}
-      </nav>
-      <div className="h-20 sm:h-24 md:hidden" aria-hidden="true" />
+          </AnimatePresence>
+        </motion.button>
+      </div>
 
       {panel === "comments" && (
         <div className="fixed inset-0 z-[70] flex items-end justify-center md:items-stretch md:justify-end" role="dialog" aria-modal="true" aria-label="Comments">

@@ -155,7 +155,14 @@ export function subscribeToConversation(
   channel
     .join()
     .receive("ok", (reply: Page) => handlers.onHistory(reply))
-    .receive("error", (resp: { reason?: string }) => handlers.onJoinError(resp?.reason || "could not join"));
+    .receive("error", (resp: { reason?: string }) => handlers.onJoinError(resp?.reason || "could not join"))
+    .receive("timeout", () => {
+      // If initial join timed out, request history page directly
+      channel
+        .push("older", { before: Number.MAX_SAFE_INTEGER })
+        .receive("ok", (reply: Page) => handlers.onHistory(reply))
+        .receive("error", () => {});
+    });
 
   return channel;
 }

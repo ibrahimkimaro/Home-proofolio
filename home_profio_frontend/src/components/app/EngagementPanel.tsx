@@ -102,7 +102,7 @@ function Comments({ list, onRemove }: { list: EngagedComment[]; onRemove: (c: En
  * "People" on the member's own portfolio page: how many followed, starred and commented, who exactly, per work; CV
  * requests to answer; messages left by visitors without an account.
  */
-export function EngagementPanel() {
+export function EngagementPanel({ onPendingCount }: { onPendingCount?: (n: number) => void } = {}) {
   const [data, setData] = useState<Engagement | null>(null);
   const [requests, setRequests] = useState<CvRequestItem[]>([]);
   const [messages, setMessages] = useState<VisitorMessageItem[]>([]);
@@ -117,9 +117,11 @@ export function EngagementPanel() {
           setData(e);
           setRequests(r);
           setMessages(m);
+          const pending = r.filter((x) => x.status === "pending").length + m.filter((x) => !x.read).length;
+          onPendingCount?.(pending);
         })
         .catch(() => setNote("Couldn't load your activity.")),
-    []
+    [onPendingCount]
   );
   useEffect(() => {
     let live = true;
@@ -129,6 +131,8 @@ export function EngagementPanel() {
         setData(e);
         setRequests(r);
         setMessages(m);
+        const pending = r.filter((x) => x.status === "pending").length + m.filter((x) => !x.read).length;
+        onPendingCount?.(pending);
       })
       .catch(() => live && setNote("Couldn't load your activity."));
     const refresh = () => document.visibilityState === "visible" && load();
@@ -294,7 +298,8 @@ export function EngagementPanel() {
       )}
 
       <div className={card}>
-        <h3 className="text-[15px] font-bold">Your profile</h3>
+        <h3 className="text-[15px] font-bold">Profile community</h3>
+        <p className="mt-0.5 text-[12px] text-slate">Members who endorsed or commented directly on your public portfolio.</p>
         <div className="mt-3 grid gap-5 lg:grid-cols-3">
           <div>
             <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-slate">Followers · {t.followers}</p>
@@ -309,58 +314,6 @@ export function EngagementPanel() {
             <Comments list={data.profile.comments} onRemove={removeComment} />
           </div>
         </div>
-      </div>
-
-      <div className={card}>
-        <h3 className="text-[15px] font-bold">Each work</h3>
-        {data.works.length === 0 ? (
-          <p className="mt-2 text-[13px] text-slate">Add work and its stars, comments and watchers show up here.</p>
-        ) : (
-          <ul className="mt-3 divide-y divide-hairline/60">
-            {data.works.map((w) => {
-              const isOpen = open === w.id;
-              return (
-                <li key={w.id} className="py-1">
-                  <button type="button" onClick={() => setOpen(isOpen ? null : w.id)} aria-expanded={isOpen} className="flex w-full cursor-pointer items-center gap-3 py-3 text-left">
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[14px] font-semibold text-ink-900">{w.title}</span>
-                      <span className="block text-[12px] capitalize text-slate">
-                        {w.work_type} · {w.visibility}
-                      </span>
-                    </span>
-                    <span className="flex shrink-0 items-center gap-3 text-[13px] text-slate">
-                      <span className="inline-flex items-center gap-1" title="Stars"><Star className="h-3.5 w-3.5" /> {w.like_count}</span>
-                      <span className="inline-flex items-center gap-1" title="Comments"><MessageCircle className="h-3.5 w-3.5" /> {w.comment_count}</span>
-                      <span className="hidden items-center gap-1 sm:inline-flex" title="Watching"><Eye className="h-3.5 w-3.5" /> {w.watcher_count}</span>
-                      <ChevronDown className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`} />
-                    </span>
-                  </button>
-                  {isOpen && (
-                    <div className="grid gap-5 pb-4 lg:grid-cols-3">
-                      <div>
-                        <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-slate">Starred by · {w.like_count}</p>
-                        <People list={w.likes} empty="No stars yet." />
-                      </div>
-                      <div>
-                        <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-slate">Comments · {w.comment_count}</p>
-                        <Comments list={w.comments} onRemove={removeComment} />
-                      </div>
-                      <div>
-                        <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-slate">Watching · {w.watcher_count}</p>
-                        <People list={w.watchers} empty="Nobody is watching it." />
-                        {w.visibility !== "private" && (
-                          <Link href={`/w/${w.id}`} className="mt-3 inline-block text-[12px] font-semibold text-ink-900 underline">
-                            Open the public page
-                          </Link>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
       </div>
     </section>
   );

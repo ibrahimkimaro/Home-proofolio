@@ -12,6 +12,9 @@ Stable product knowledge for the HOME PROOFOLIO AI companion.
 - `memory_and_story.md` — Daily Memory and stories
 - `faq.md` — common questions
 - `examples.md` — behavior examples
+- `app_guide.md` — where things are in the app and how to do common tasks
+- `ai_companion_guide.md` — what the AI companion can and cannot do, permissions and settings
+- `public_site.md` — signing up, price, contact and what visitors can do (used by the website's support assistant)
 
 ## Retrieval rule
 Do not inject every document into every prompt. Retrieve only relevant knowledge for the user's request.

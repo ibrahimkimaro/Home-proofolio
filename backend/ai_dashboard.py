@@ -1,6 +1,5 @@
 """Dev-only AI dashboard (no login: always speaks to the creator). Run from backend/: .venv/bin/python ai_dashboard.py"""
 import os
-
 import gradio as gr
 from sqlalchemy import select
 
@@ -32,7 +31,7 @@ async def chat(message, history):
     lines = [f"{'User' if h['role'] == 'user' else 'AI'}: {h['content']}" for h in (history or [])[-6:]]
     user = await kimmy()
     async with AsyncSessionLocal() as db:
-        return await reply(engine, db, user.id, KIMMY, message, lines)
+        return await reply(engine, db, user.id, KIMMY, message, lines, dev=True)  # dev: sandbox file tools too
 
 
 def pdf_text(name):

@@ -79,7 +79,7 @@ export default function CvPage() {
     }
     const url = `${window.location.origin}/cv/s/${token}`;
     if (action === "share" && navigator.share) {
-      navigator.share({ title: `CV - ${composeCv(current).name}`, url }).catch(() => {});
+      navigator.share({ title: `CV - ${composeCv(current).name}`, url }).catch(() => { });
     } else {
       setQrOpen(true);
     }
@@ -187,9 +187,8 @@ function Action({ onClick, icon: Icon, label, primary }: { onClick: () => void; 
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-xl px-4 text-[13px] font-semibold transition-opacity ${
-        primary ? "bg-ink text-paper hover:opacity-90" : "border border-hairline text-ink-800 hover:bg-paper-dim"
-      }`}
+      className={`inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-xl px-4 text-[13px] font-semibold transition-opacity ${primary ? "bg-ink text-paper hover:opacity-90" : "border border-hairline text-ink-800 hover:bg-paper-dim"
+        }`}
     >
       <Icon className="h-4 w-4" /> {label}
     </button>

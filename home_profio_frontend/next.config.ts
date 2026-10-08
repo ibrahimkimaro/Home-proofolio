@@ -10,6 +10,8 @@ function withAnalyzer(config: NextConfig): NextConfig {
 }
 
 const nextConfig: NextConfig = {
+  // gzip would hold back the AI chat stream (status updates) until the whole answer is ready
+  compress: false,
   // Configurable output directory so dev (.next) and prod-test (.next_test) don't overwrite each other
   distDir: process.env.NEXT_DIST_DIR || ".next",
 
@@ -50,21 +52,30 @@ const nextConfig: NextConfig = {
     "*.lan"
   ],
 
+  // The /api proxy below gives up after 30s by default ("socket hang up"). A reply from the local AI model on
+  // CPU can take minutes, so allow 5.
+  experimental: {
+    proxyTimeout: 300_000,
+  },
+
   // Proxy /api/* → backend so browser cookies work on same origin (no cross-port issues)
+  // afterFiles ensures custom App Router API routes (e.g. /api/ai/*) are resolved first without socket drops.
   async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${process.env.API_INTERNAL_URL || "http://127.0.0.1:8000"}/:path*`,
-      },
-      // Realtime chat + call signaling websocket (Phoenix). Pages served over https (e.g. through a
-      // Cloudflare or Dev Tunnel to this port) connect to wss://<same host>/socket; see socketUrl() in
-      // src/lib/realtime.ts. Plain-http pages keep connecting to :4000 directly.
-      {
-        source: "/socket/:path*",
-        destination: `${process.env.REALTIME_INTERNAL_URL || "http://127.0.0.1:4000"}/socket/:path*`,
-      },
-    ];
+    return {
+      afterFiles: [
+        {
+          source: "/api/:path*",
+          destination: `${process.env.API_INTERNAL_URL || "http://127.0.0.1:8000"}/:path*`,
+        },
+        // Realtime chat + call signaling websocket (Phoenix). Pages served over https (e.g. through a
+        // Cloudflare or Dev Tunnel to this port) connect to wss://<same host>/socket; see socketUrl() in
+        // src/lib/realtime.ts. Plain-http pages keep connecting to :4000 directly.
+        {
+          source: "/socket/:path*",
+          destination: `${process.env.REALTIME_INTERNAL_URL || "http://127.0.0.1:4000"}/socket/:path*`,
+        },
+      ],
+    };
   },
 
   // Lightweight polling for Docker host mounts on Windows (ignoring heavy directories)

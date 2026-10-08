@@ -1,5 +1,5 @@
 import json
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,11 +25,25 @@ class Settings(BaseSettings):
     # Where the site lives, for links in emails when the request has no Origin (CV links).
     site_url: str = "http://localhost:3001"
 
-    # Local Ollama (AI assistant, app/ai). From inside Docker use http://host.docker.internal:11434.
-    ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "qwen2.5-coder:latest"
-    # Hugging Face Inference API (image/TTS), not wired yet. Replace the local-only flow when added.
-    huggingface_api_token: str = ""
+    # AI assistant (app/ai). "huggingface" = hosted model through the Hugging Face router, "ollama" = local model.
+    ai_provider: str = "ollama"
+    # Hugging Face token with the "Make calls to Inference Providers" permission. Keep it in backend/.env only
+    # (never in .env.example, which is committed). Any of these names works.
+    huggingface_api_token: str = Field("", validation_alias=AliasChoices("HUGGINGFACE_API_TOKEN", "HF_API_TOKEN", "HF_TOKEN"))
+    huggingface_model: str = "Qwen/Qwen3.8-27B"
+    huggingface_base_url: str = "https://router.huggingface.co/v1"
+    # Extra root certificate to trust for that connection (antivirus "web shields" re-sign it). Checking stays on.
+    huggingface_ca_file: str = ""
+    # How much the model thinks before answering: "none" (fastest) | "low" | "medium" | "high" | "" (provider default).
+    ai_reasoning_effort: str = "low"
+    ai_max_tokens: int = 2048  # per model call, thinking included
+    ai_timeout_seconds: int = 60
+    ai_max_tool_steps: int = 5  # tool rounds per chat turn before the model must answer
+    # Extra MCP servers for the dev dashboard, as JSON: {"name": {"command": "npx", "args": [...]}} or {"name": {"url": "https://.../mcp"}}
+    mcp_servers: dict = {}
+    # Local Ollama, used when AI_PROVIDER=ollama. From inside Docker use http://host.docker.internal:11434.
+    ollama_base_url: str = "http://host.docker.internal:11434"
+    ollama_model: str = "qwen2.5:7b"
 
     model_config = SettingsConfigDict(
         env_file=".env",

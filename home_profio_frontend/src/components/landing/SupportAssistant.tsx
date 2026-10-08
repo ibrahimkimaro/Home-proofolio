@@ -6,16 +6,19 @@ import {
   ArrowLeft,
   Headset,
   MessageSquare,
+  Sparkles,
   X,
 } from "lucide-react";
 import { fetchCurrentUser, fetchSupportAgent, initGuestSupport, type SupportAgent, type User } from "@/lib/api";
 import { getOrCreateGuestSessionId, readGuestMemory, rememberGuestName, touchGuest, type GuestMemory } from "@/lib/guest";
 import { OPEN_SUPPORT_EVENT } from "@/lib/support-ui";
 import { SupportChat } from "@/components/chat/SupportChat";
+import { SupportAiChat } from "./SupportAiChat";
 
 export function SupportAssistant() {
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<"faq" | "live">("faq");
+  // "ai": the AI assistant answers first. "faq": the visitor asked for a person (we may ask their name). "live": chat with the team.
+  const [mode, setMode] = useState<"ai" | "faq" | "live">("ai");
   const [connecting, setConnecting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -45,10 +48,10 @@ export function SupportAssistant() {
     fetchCurrentUser().then(setViewer).catch(() => setViewer(null));
   }, []);
 
-  // If user is known (logged-in member or returning guest with name) or skipped intro,
-  // automatically connect directly to the live chat when opening the assistant!
+  // Once they ask for a person: if we know who they are (member, returning guest with a name, or they skipped
+  // the intro), connect straight to the live chat instead of showing the name form.
   useEffect(() => {
-    if (open && (viewer || memory.name || skippedIntro) && mode !== "live" && !connecting && !errorMsg) {
+    if (open && mode === "faq" && (viewer || memory.name || skippedIntro) && !connecting && !errorMsg) {
       connectToLiveSupport();
     }
   }, [open, viewer, memory.name, skippedIntro, mode, connecting, errorMsg]);
@@ -58,6 +61,7 @@ export function SupportAssistant() {
   useEffect(() => {
     const onOpen = (e: Event) => {
       setOpen(true);
+      setMode((m) => (m === "live" ? m : "faq")); // these messages are for the team, not the AI
       connectRef.current((e as CustomEvent<{ text?: string }>).detail?.text);
     };
     window.addEventListener(OPEN_SUPPORT_EVENT, onOpen);
@@ -180,26 +184,29 @@ export function SupportAssistant() {
               {/* Sticky Header - never hidden on phone */}
               <div className="sticky top-0 z-20 flex h-14 sm:h-16 shrink-0 items-center justify-between border-b border-hairline/70 bg-paper-dim/95 backdrop-blur-md px-3.5 sm:px-4">
                 <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-                  {mode === "live" && (
+                  {mode !== "ai" && (
                     <button
                       type="button"
-                      onClick={() => setMode("faq")}
-                      aria-label="Back to FAQs"
+                      onClick={() => {
+                        setErrorMsg(null);
+                        setMode("ai");
+                      }}
+                      aria-label="Back to the assistant"
                       className="cursor-pointer rounded-lg p-1.5 text-slate hover:bg-paper hover:text-ink transition-colors"
                     >
                       <ArrowLeft className="h-4 w-4" />
                     </button>
                   )}
                   <div className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full bg-brass/15 text-brass-dark">
-                    <Headset className="h-4 w-4" />
+                    {mode === "ai" ? <Sparkles className="h-4 w-4" /> : <Headset className="h-4 w-4" />}
                   </div>
                   <div className="min-w-0">
                     <p className="truncate text-[13px] sm:text-[14px] font-bold text-ink-800">
-                      {mode === "live" ? (agent?.name || "Live Support") : "Support Assistant"}
+                      {mode === "live" ? (agent?.name || "Live Support") : mode === "ai" ? "Proofolio Assistant" : "Talk to our team"}
                     </p>
                     <p className="flex items-center gap-1.5 text-[10px] sm:text-[11px] font-medium text-slate">
                       <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                      {mode === "live" ? "Direct chat with Admin" : "Online • Help & Support"}
+                      {mode === "live" ? "Direct chat with Admin" : mode === "ai" ? "AI assistant • instant answers" : "Online • Help & Support"}
                     </p>
                   </div>
                 </div>
@@ -215,7 +222,9 @@ export function SupportAssistant() {
               </div>
 
               {/* Body */}
-              {mode === "live" && activeMe && agent ? (
+              {mode === "ai" ? (
+                <SupportAiChat name={firstName || memory.name} onHuman={() => setMode("faq")} />
+              ) : mode === "live" && activeMe && agent ? (
                 <div className="flex-1 overflow-hidden flex flex-col">
                   <SupportChat
                     me={activeMe}

@@ -11,7 +11,7 @@ async def build_work_report(db: AsyncSession, user) -> str:
     by_status, by_type = await work_breakdown(db, user.id)
     rows = await recent_work(db, user.id, limit=25)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    stem = f"work_{user.username}_{stamp}"
+    stem = f"u{user.id.hex}_{stamp}"  # starts with the owner's id: that is what lets only them download it
     total = sum(by_status.values())
     sections = [{"heading": "Summary", "text": f"{user.fullname} has {total} work items."}]
     if total:

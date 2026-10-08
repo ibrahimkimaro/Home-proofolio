@@ -14,6 +14,7 @@ from app.api.admin_messages import router as admin_messages_router
 from app.api.admin_security import router as admin_security_router
 from app.api.admin_system import router as admin_system_router
 from app.api.chat_clear import router as chat_clear_router
+from app.api.chat_pins import router as chat_pins_router
 from app.api.engage import router as engage_router
 from app.api.member_codes import router as member_codes_router
 from app.api.push import router as push_router
@@ -21,6 +22,7 @@ from app.api.auth import router as auth_router
 from app.api.businesses import router as businesses_router
 from app.api.settings import router as settings_router
 from app.api.social import router as social_router
+from app.api.discussions import router as discussions_router
 from app.api.support import router as support_router
 from app.api.groups import router as groups_router
 from app.api.chat_files import router as chat_files_router
@@ -81,6 +83,7 @@ app.include_router(admin_security_router)
 app.include_router(admin_messages_router)
 app.include_router(member_codes_router)
 app.include_router(chat_clear_router)
+app.include_router(chat_pins_router)
 app.include_router(engage_router)
 app.include_router(push_router)
 app.include_router(admin_system_router)
@@ -92,6 +95,7 @@ app.include_router(notifications_router)
 app.include_router(settings_router)
 app.include_router(businesses_router)
 app.include_router(social_router)
+app.include_router(discussions_router)
 app.include_router(support_router)
 app.include_router(groups_router)
 app.include_router(chat_files_router)

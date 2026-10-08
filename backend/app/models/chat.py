@@ -75,3 +75,14 @@ class ChatClear(Base):
     topic: Mapped[str] = mapped_column(String(200), primary_key=True)
     up_to: Mapped[int] = mapped_column(BigInteger, nullable=False)
     cleared_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ChatPin(Base):
+    """A message this member pinned in a conversation. Personal: the other people don't see it (like starring)."""
+
+    __tablename__ = "chat_pins"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    topic: Mapped[str] = mapped_column(String(200), primary_key=True)
+    message_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # chat_messages.id
+    pinned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

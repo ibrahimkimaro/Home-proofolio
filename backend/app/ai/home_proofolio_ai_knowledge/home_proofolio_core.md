@@ -34,4 +34,5 @@ Anyone can explore public profiles without an account.
 - Personal AI companion
 
 ## Technology
-Next.js frontend, FastAPI backend, PostgreSQL, Phoenix/Elixir for real-time chat and calls, Ollama with a local model for AI, ClickHouse planned for analytics.
+Next.js frontend, FastAPI backend, PostgreSQL, Phoenix/Elixir for real-time chat and calls, the Qwen model (local Qwen2.5:7B via Ollama or Hugging Face) for the AI companion (LangChain agent with MCP tools), ClickHouse planned for analytics.
+

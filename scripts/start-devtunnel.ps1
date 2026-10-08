@@ -14,13 +14,13 @@ Get-Process -Name devtunnel -ErrorAction SilentlyContinue | Stop-Process -Force 
 
 # Locate devtunnel CLI
 $DevTunnel = "$PSScriptRoot\..\tools\devtunnel.exe"
-if (-not (Test-Path $DevTunnel)) {
-    if (Get-Command devtunnel -ErrorAction SilentlyContinue) {
-        $DevTunnel = "devtunnel"
-    } else {
-        Write-Host "Error: devtunnel.exe not found at $DevTunnel and not in PATH." -ForegroundColor Red
-        exit 1
-    }
+if (Test-Path $DevTunnel) {
+    $DevTunnel = (Resolve-Path $DevTunnel).Path
+} elseif (Get-Command devtunnel -ErrorAction SilentlyContinue) {
+    $DevTunnel = "devtunnel"
+} else {
+    Write-Host "Error: devtunnel.exe not found at $DevTunnel and not in PATH." -ForegroundColor Red
+    exit 1
 }
 
 Write-Host "========================================================" -ForegroundColor Cyan
@@ -87,9 +87,10 @@ if (-not $PortConfigured) {
 
 # Extract actual public URL for target port
 $StableUrl = ""
-if ($TunnelInfo -match "(https://[a-zA-Z0-9\.\-]+-$Port\.[a-zA-Z0-9\.\-]+devtunnels\.ms/?)") {
+$TunnelText = ($TunnelInfo | Out-String)
+if ($TunnelText -match "(https://[a-zA-Z0-9\.\-]+-$Port\.[a-zA-Z0-9\.\-]+devtunnels\.ms/?)") {
     $StableUrl = $Matches[1].TrimEnd('/')
-} elseif ($TunnelInfo -match "(https://[a-zA-Z0-9\.\-]+devtunnels\.ms/?)") {
+} elseif ($TunnelText -match "(https://[a-zA-Z0-9\.\-]+devtunnels\.ms/?)") {
     $StableUrl = $Matches[1].TrimEnd('/')
 }
 

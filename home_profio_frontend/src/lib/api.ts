@@ -1,5 +1,23 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "/api";
 
+import {
+  clearAllAuthStorage,
+  getCachedUser,
+  isUserCacheFresh,
+  sanitizeUserForStorage,
+  setCachedUser,
+  updateCachedUser,
+} from "./user-cache";
+
+export {
+  clearAllAuthStorage,
+  getCachedUser,
+  isUserCacheFresh,
+  sanitizeUserForStorage,
+  setCachedUser,
+  updateCachedUser,
+};
+
 export class ApiError extends Error {
   status: number;
 
@@ -94,7 +112,7 @@ export interface User {
   preferences?: { appearance?: Record<string, string> };
 }
 
-export function registerUser(payload: {
+export async function registerUser(payload: {
   email: string;
   password: string;
   username: string;
@@ -102,27 +120,50 @@ export function registerUser(payload: {
   fullname?: string;
   phone_number?: string;
 }) {
-  return request<User>("/auth/register", { method: "POST", body: JSON.stringify(payload) });
+  const user = await request<User>("/auth/register", { method: "POST", body: JSON.stringify(payload) });
+  setCachedUser(user);
+  return user;
 }
 
-export function loginUser(payload: { email: string; password: string }) {
-  return request<User>("/auth/login", { method: "POST", body: JSON.stringify(payload) });
+export async function loginUser(payload: { email: string; password: string }) {
+  const user = await request<User>("/auth/login", { method: "POST", body: JSON.stringify(payload) });
+  setCachedUser(user);
+  return user;
 }
 
-async function logoutRequest() {
-  return request<void>("/auth/logout", { method: "POST" });
+export interface LogoutFeedbackPayload {
+  rating?: number;
+  feedback?: string;
 }
 
-/** Sign out. This device first stops receiving this member's notifications (the next person can turn theirs on). */
-export async function logoutUser() {
+/** Sign out. This device stops notifications and completely purges all cached profile and session state. */
+export async function logoutUser(feedback?: LogoutFeedbackPayload) {
   try {
     await (await import("./push")).forgetThisDevice();
   } catch {}
-  return logoutRequest();
+  clearAllAuthStorage();
+  return request<void>("/auth/logout", {
+    method: "POST",
+    body: feedback ? JSON.stringify(feedback) : undefined,
+  });
 }
 
-export function fetchCurrentUser() {
-  return request<User>("/auth/me");
+/** Fetches current user, serving from secure client cache when fresh to eliminate redundant network hits. */
+export async function fetchCurrentUser(options?: { force?: boolean }): Promise<User> {
+  if (!options?.force && isUserCacheFresh()) {
+    const cached = getCachedUser({ allowStale: false });
+    if (cached) return cached;
+  }
+  try {
+    const user = await request<User>("/auth/me");
+    setCachedUser(user);
+    return user;
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+      clearAllAuthStorage();
+    }
+    throw err;
+  }
 }
 
 export interface UsernameCheckResult {
@@ -411,16 +452,33 @@ export async function uploadFile(file: File): Promise<UploadResult> {
   return { url: data.path, name: data.name, content_type: data.content_type };
 }
 
-export function updateProfile(payload: Partial<Pick<Profile, "display_name" | "headline" | "bio" | "username" | "visibility" | "allow_indexing">>) {
-  return request<Profile>("/me/profile", { method: "PATCH", body: JSON.stringify(payload) });
+export async function updateProfile(payload: Partial<Pick<Profile, "display_name" | "headline" | "bio" | "username" | "visibility" | "allow_indexing">>) {
+  const profile = await request<Profile>("/me/profile", { method: "PATCH", body: JSON.stringify(payload) });
+  updateCachedUser((u) => ({
+    ...u,
+    fullname: profile.display_name || u.fullname,
+    username: profile.username || u.username,
+    profile: { ...u.profile, ...profile },
+  }));
+  return profile;
 }
 
-export function uploadAvatar(file: File) {
-  return postFile<Profile>("/me/avatar", file);
+export async function uploadAvatar(file: File) {
+  const profile = await postFile<Profile>("/me/avatar", file);
+  updateCachedUser((u) => ({
+    ...u,
+    profile: { ...u.profile, ...profile },
+  }));
+  return profile;
 }
 
-export function removeAvatar() {
-  return request<Profile>("/me/avatar", { method: "DELETE" });
+export async function removeAvatar() {
+  const profile = await request<Profile>("/me/avatar", { method: "DELETE" });
+  updateCachedUser((u) => ({
+    ...u,
+    profile: { ...u.profile, ...profile },
+  }));
+  return profile;
 }
 
 export type PortfolioSection = "about" | "experience" | "works" | "contact";
@@ -675,10 +733,111 @@ export interface SearchResults {
   }[];
   businesses?: { slug: string; name: string; type: BusinessType; description: string | null }[];
   skills?: { name: string; works: number }[];
+  discussions?: {
+    id: string;
+    title: string;
+    content: string;
+    category: string;
+    tags: string[];
+    created_at: string;
+    replies: number;
+    upvotes: number;
+    author: { name: string; username: string; avatar: string | null };
+  }[];
 }
 
-export function search(q: string, type: "all" | "people" | "work" | "businesses" | "skills" = "all") {
+export function search(q: string, type: "all" | "people" | "work" | "businesses" | "skills" | "discussions" = "all") {
   return request<SearchResults>(`/search?q=${encodeURIComponent(q)}&type=${type}`);
+}
+
+// ---------- discussions ----------
+
+export interface DiscussionThreadItem {
+  id: string;
+  title: string;
+  content: string;
+  category: "tech" | "design" | "health" | "sports" | "general";
+  categoryLabel: string;
+  accessType: "open" | "invited";
+  invitedUsers?: string[];
+  author: {
+    id?: string;
+    username?: string;
+    name: string;
+    role: string;
+    avatar?: string | null;
+  };
+  upvotes: number;
+  replies: number;
+  hasVoted?: boolean;
+  tags: string[];
+  createdAt: string;
+  updatedAt?: string;
+  repliesList?: {
+    id: string;
+    text: string;
+    author: string;
+    role: string;
+    avatar?: string | null;
+    username?: string;
+    userId?: string;
+    time: string;
+  }[];
+}
+
+export interface CreateDiscussionInput {
+  title: string;
+  content: string;
+  category: "tech" | "design" | "health" | "sports" | "general";
+  access_type: "open" | "invited";
+  invited_users?: string[];
+  tags?: string[];
+}
+
+export function fetchDiscussions(params?: { category?: string; access_type?: string; search?: string }) {
+  const sp = new URLSearchParams();
+  if (params?.category && params.category !== "all") sp.set("category", params.category);
+  if (params?.access_type && params.access_type !== "all") sp.set("access_type", params.access_type);
+  if (params?.search) sp.set("search", params.search);
+  const q = sp.toString();
+  return request<DiscussionThreadItem[]>(`/discussions${q ? `?${q}` : ""}`);
+}
+
+export function fetchDiscussion(id: string) {
+  return request<DiscussionThreadItem>(`/discussions/${id}`);
+}
+
+export function createDiscussion(input: CreateDiscussionInput) {
+  return request<DiscussionThreadItem>("/discussions", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function postDiscussionReply(discussionId: string, content: string) {
+  return request<{
+    id: string;
+    text: string;
+    author: string;
+    role: string;
+    avatar?: string | null;
+    username?: string;
+    userId?: string;
+    time: string;
+  }>(`/discussions/${discussionId}/replies`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+}
+
+export function toggleDiscussionVote(discussionId: string) {
+  return request<{ upvotes: number; hasVoted: boolean }>(`/discussions/${discussionId}/vote`, {
+    method: "POST",
+  });
+}
+
+export function deleteDiscussion(discussionId: string) {
+  return request<void>(`/discussions/${discussionId}`, { method: "DELETE" });
 }
 
 // ---------- settings ----------
@@ -1135,6 +1294,19 @@ export const editChatGroup = (id: string, changes: { name?: string; topic?: stri
 export const uploadGroupAvatar = (id: string, file: File) => postFile<ChatGroupItem>(`/chat/groups/${id}/avatar`, file);
 export const removeGroupAvatar = (id: string) => request<ChatGroupItem>(`/chat/groups/${id}/avatar`, { method: "DELETE" });
 export const deleteChatGroup = (id: string) => request<void>(`/chat/groups/${id}`, { method: "DELETE" });
+/** A message I pinned in a chat (pins are personal: the other people don't see them). */
+export interface ChatPinItem {
+  message_id: number;
+  author_name: string;
+  text: string;
+  has_file: boolean;
+  deleted: boolean;
+}
+export const fetchPins = (topic: string) => request<ChatPinItem[]>(`/chat/pins?topic=${encodeURIComponent(topic)}`);
+export const pinMessage = (topic: string, messageId: number) =>
+  request<void>("/chat/pins", { method: "POST", body: JSON.stringify({ topic, message_id: messageId }) });
+export const unpinMessage = (topic: string, messageId: number) =>
+  request<void>(`/chat/pins?topic=${encodeURIComponent(topic)}&message_id=${messageId}`, { method: "DELETE" });
 /** "Delete chat": clears this conversation for me only (1:1 or group); the others keep theirs. */
 export const clearChat = (topic: string) => request<void>("/chat/clear", { method: "POST", body: JSON.stringify({ topic }) });
 export const acceptGroupInvite = (id: string) =>
@@ -1400,3 +1572,148 @@ export interface Engagement {
   }[];
 }
 export const fetchEngagement = () => request<Engagement>("/me/engagement");
+
+// ---------- AI: admin dashboards and the website's support assistant ----------
+
+/** One chart of an AI-built dashboard. The numbers always come from the database, never from the model. */
+export type AiWidget =
+  | { type: "kpis"; title: string; items: { label: string; value: number; prev?: number; hint?: string }[] }
+  | { type: "columns"; title: string; total: number; points: Point[]; mode: "sum" | "avg" }
+  | { type: "bars"; title: string; bars: Bar[]; empty?: string; view?: "bars" | "pie" | "donut" }
+  | { type: "funnel"; title: string; steps: { step: string; value: number }[] };
+
+export interface AiDashboard {
+  /** The model's short summary of what the charts show. */
+  reply: string;
+  widgets: AiWidget[];
+  /** A PDF the assistant made: show a download button. url is an API path, see apiUrl(). */
+  download?: { name: string; label: string; url: string } | null;
+  seconds: number;
+}
+
+/** Full URL of an API path, for links the browser opens itself (downloads). */
+export const apiUrl = (path: string) => `${API_URL}${path}`;
+
+/** build = a dashboard of charts, chat = plain conversation, prepare = a written piece (report, story, announcement). */
+export type AdminAiMode = "build" | "chat" | "prepare";
+
+/** Admin: ask in plain words, get a reply and charts. history: earlier "User: ..." / "Assistant: ..." lines, oldest first. */
+export const adminAiDashboard = (prompt: string, history: string[] = [], mode: AdminAiMode = "build") =>
+  request<AiDashboard>("/ai/admin/dashboard", json("POST", { prompt, history, mode }));
+
+/** Public website: one turn with the AI support assistant. No account needed; it sees no user data. */
+export const askSupportAi = (message: string, history: string[] = [], name?: string | null) =>
+  request<{ reply: string }>("/ai/support", {
+    method: "POST",
+    body: JSON.stringify({ message, history, name: name || null }),
+  });
+
+// ---------- Memories & Personal Timeline ----------
+
+export interface MemoryItem {
+  id: string;
+  title: string | null;
+  content: string;
+  mood: string;
+  people: string[];
+  category: string;
+  location?: string | null;
+  skills?: string[];
+  tags?: string[];
+  importance?: number;
+  occurred_on: string;
+  occurred_time?: string | null;
+  visibility: "public" | "unlisted" | "private" | "draft";
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface CreateMemoryPayload {
+  title?: string | null;
+  content: string;
+  mood: string;
+  people: string[];
+  category?: string;
+  location?: string | null;
+  tags?: string[];
+  importance?: number;
+  occurred_on?: string | null;
+  visibility?: "public" | "unlisted" | "private" | "draft";
+}
+
+export const fetchMemories = (params?: { q?: string; category?: string; mood?: string; limit?: number }) => {
+  const query = new URLSearchParams();
+  if (params?.q) query.set("q", params.q);
+  if (params?.category) query.set("category", params.category);
+  if (params?.mood) query.set("mood", params.mood);
+  if (params?.limit) query.set("limit", String(params.limit));
+  const qs = query.toString();
+  return request<MemoryItem[]>(`/memories${qs ? `?${qs}` : ""}`);
+};
+
+export const fetchMemory = (id: string) => request<MemoryItem>(`/memories/${id}`);
+
+export const createMemory = (payload: CreateMemoryPayload) =>
+  request<MemoryItem>("/memories", { method: "POST", body: JSON.stringify(payload) });
+
+export const updateMemory = (id: string, payload: Partial<CreateMemoryPayload>) =>
+  request<MemoryItem>(`/memories/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+
+export const deleteMemory = (id: string) =>
+  request<void>(`/memories/${id}`, { method: "DELETE" });
+
+// ---------- Stories & Narrated Journeys ----------
+
+export interface StoryChapterItem {
+  id: string;
+  position: number;
+  title: string;
+  content: string;
+  memory_ids: string[];
+  ai_generated?: boolean;
+}
+
+export interface StoryItem {
+  id: string;
+  title: string;
+  description?: string | null;
+  cover_media?: string | null;
+  status: "draft" | "published";
+  visibility: "public" | "unlisted" | "private" | "draft";
+  created_at: string;
+  updated_at?: string;
+  chapters?: StoryChapterItem[];
+}
+
+export interface CreateStoryPayload {
+  title: string;
+  description?: string | null;
+  visibility?: "public" | "unlisted" | "private" | "draft";
+  status?: "draft" | "published";
+}
+
+export const fetchStories = () => request<StoryItem[]>("/stories");
+
+export const fetchStory = (id: string) => request<StoryItem>(`/stories/${id}`);
+
+export const createStory = (payload: CreateStoryPayload) =>
+  request<StoryItem>("/stories", { method: "POST", body: JSON.stringify(payload) });
+
+export const updateStory = (id: string, payload: Partial<CreateStoryPayload>) =>
+  request<StoryItem>(`/stories/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+
+export const deleteStory = (id: string) =>
+  request<void>(`/stories/${id}`, { method: "DELETE" });
+
+export const generateStoryWithAi = (topic: string) =>
+  request<StoryItem>("/stories/generate", { method: "POST", body: JSON.stringify({ topic }) });
+
+export const addStoryChapter = (storyId: string, payload: { title: string; content?: string }) =>
+  request<StoryChapterItem>(`/stories/${storyId}/chapters`, { method: "POST", body: JSON.stringify(payload) });
+
+export const updateStoryChapter = (storyId: string, chapterId: string, payload: { title?: string; content?: string }) =>
+  request<StoryChapterItem>(`/stories/${storyId}/chapters/${chapterId}`, { method: "PATCH", body: JSON.stringify(payload) });
+
+export const deleteStoryChapter = (storyId: string, chapterId: string) =>
+  request<void>(`/stories/${storyId}/chapters/${chapterId}`, { method: "DELETE" });
+

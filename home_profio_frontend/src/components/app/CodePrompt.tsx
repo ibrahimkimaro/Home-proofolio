@@ -80,24 +80,28 @@ export function CodeBanner() {
             transition={{ duration: reduce ? 0 : 0.4, ease: EASE }}
             className="overflow-hidden"
           >
-            <div role="status" className="relative mx-4 mt-4 flex flex-col gap-3 overflow-hidden rounded-2xl border border-brass/40 bg-brass/10 px-4 py-3.5 sm:mx-6 sm:flex-row sm:items-center sm:gap-4">
-              <span aria-hidden="true" className="animate-shimmer pointer-events-none absolute inset-y-0 -left-1/2 w-[200%] bg-[linear-gradient(100deg,transparent_35%,rgba(255,255,255,0.55)_50%,transparent_65%)] dark:bg-[linear-gradient(100deg,transparent_35%,rgba(255,255,255,0.12)_50%,transparent_65%)]" />
-              <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brass/20 text-brass-dark">
-                <KeyRound className="h-[18px] w-[18px]" />
-              </span>
-              <div className="relative min-w-0 flex-1">
-                <p className="text-[14px] font-semibold text-ink">
-                  {first.label} is ready{codes.length > 1 ? ` (+${codes.length - 1} more)` : ""}
-                </p>
-                <p className="mt-0.5 text-[13px] text-slate">
-                  We sent it {first.channel === "email" ? "to your email" : "by SMS"} ({first.destination}). Enter it to continue. It expires in about{" "}
-                  {Math.max(1, Math.round((first.until - now) / 60000))} min.
-                </p>
+            <div
+              role="status"
+              className="relative mx-4 mt-4 flex flex-col gap-3.5 overflow-hidden rounded-2xl border border-brass/40 bg-brass/10 p-4 sm:mx-6 sm:flex-row sm:items-center sm:justify-between sm:gap-4 shadow-xs"
+            >
+              <div className="flex items-start sm:items-center gap-3.5 min-w-0 flex-1">
+                <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brass/25 text-brass-dark ring-1 ring-brass/30 shadow-xs">
+                  <KeyRound className="h-5 w-5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[14px] font-semibold tracking-tight text-ink">
+                    {first.label} is ready{codes.length > 1 ? ` (+${codes.length - 1} more)` : ""}
+                  </p>
+                  <p className="mt-0.5 text-[13px] text-slate leading-relaxed">
+                    We sent it {first.channel === "email" ? "to your email" : "by SMS"} ({first.destination}). Enter it to continue. It expires in about{" "}
+                    <span className="font-medium text-ink/80">{Math.max(1, Math.round((first.until - now) / 60000))} min</span>.
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => setOpen(true)}
-                className="relative shrink-0 cursor-pointer self-start rounded-full bg-ink px-5 py-2.5 text-[14px] font-semibold text-paper transition-transform hover:scale-[1.03] active:scale-[0.98] sm:self-center"
+                className="relative shrink-0 cursor-pointer self-start rounded-full bg-ink px-5 py-2.5 text-[14px] font-semibold text-paper shadow-xs transition-all hover:scale-[1.02] hover:bg-ink/90 active:scale-[0.98] sm:self-center"
               >
                 Enter code
               </button>

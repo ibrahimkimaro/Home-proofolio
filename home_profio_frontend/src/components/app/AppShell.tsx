@@ -6,11 +6,13 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Award,
+  BookMarked,
   BookOpen,
   Briefcase,
   Compass,
   FileText,
   Headset,
+  History,
   Home,
   LayoutGrid,
   LogOut,
@@ -22,6 +24,7 @@ import {
   Search,
   Settings,
   Shield,
+  Sparkles,
   UserRound,
   Users,
   X,
@@ -35,42 +38,32 @@ import { CodeBanner } from "@/components/app/CodePrompt";
 import { OnboardingFlush } from "@/components/app/OnboardingFlush";
 import { NotificationBell } from "@/components/app/Notifications";
 import { adoptAccountAppearance, forgetAdoptedAppearance, type Appearance } from "@/lib/appearance";
-import { fetchCurrentUser, logoutUser, mediaUrl, type User } from "@/lib/api";
+import {
+  clearAllAuthStorage,
+  fetchCurrentUser,
+  getCachedUser,
+  isUserCacheFresh,
+  logoutUser,
+  mediaUrl,
+  setCachedUser,
+  type LogoutFeedbackPayload,
+  type User,
+} from "@/lib/api";
 import { UniversalWorkForm } from "@/components/app/UniversalWorkForm";
 import { ChatNotifier, unreadTotal, useChatInbox } from "@/components/chat/ChatNotifier";
 import { CallOverlay } from "@/components/chat/CallOverlay";
+import { CompanionChatWidget } from "@/components/ai/CompanionChatWidget";
+import { LogoutModal } from "@/components/app/LogoutModal";
 
 export const CAPTURE_EVENT = "proofolio:capture";
 export { AppShellSkeleton } from "./AppShellSkeleton";
 
-const SESSION_CACHE_KEY = "proofolio-session-user";
-let memoryUser: User | null = null;
-
 export function getCachedSessionUser(): User | null {
-  if (memoryUser) return memoryUser;
-  if (typeof window !== "undefined") {
-    try {
-      const stored = sessionStorage.getItem(SESSION_CACHE_KEY);
-      if (stored) {
-        memoryUser = JSON.parse(stored);
-        return memoryUser;
-      }
-    } catch { }
-  }
-  return null;
+  return getCachedUser({ allowStale: true });
 }
 
 export function setCachedSessionUser(u: User | null) {
-  memoryUser = u;
-  if (typeof window !== "undefined") {
-    try {
-      if (u) {
-        sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(u));
-      } else {
-        sessionStorage.removeItem(SESSION_CACHE_KEY);
-      }
-    } catch { }
-  }
+  setCachedUser(u);
 }
 
 /** Loads the signed-in user with instant synchronous cache; sends visitors to /login. */
@@ -80,20 +73,45 @@ export function useSession() {
 
   useEffect(() => {
     let active = true;
-    fetchCurrentUser()
-      .then((u) => {
-        if (!active) return;
-        setCachedSessionUser(u);
-        adoptAccountAppearance(u.preferences?.appearance as Partial<Appearance> | undefined);
-        setUserState(u);
-      })
-      .catch(() => {
-        if (!active) return;
-        setCachedSessionUser(null);
+
+    const onUserUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<User>;
+      if (active && customEvent.detail) {
+        setUserState(customEvent.detail);
+      }
+    };
+    const onUserCleared = () => {
+      if (active) {
+        setUserState(null);
         router.replace("/login");
-      });
+      }
+    };
+
+    window.addEventListener("proofolio:user-updated", onUserUpdated);
+    window.addEventListener("proofolio:user-cleared", onUserCleared);
+
+    // Only hit the network if cache is absent or stale (eliminates redundant /auth/me calls)
+    if (!isUserCacheFresh()) {
+      fetchCurrentUser()
+        .then((u) => {
+          if (!active) return;
+          adoptAccountAppearance(u.preferences?.appearance as Partial<Appearance> | undefined);
+          setUserState(u);
+        })
+        .catch((err) => {
+          if (!active) return;
+          // Only redirect to login on true unauthenticated responses (401/403).
+          if (err && (err.status === 401 || err.status === 403)) {
+            clearAllAuthStorage();
+            router.replace("/login");
+          }
+        });
+    }
+
     return () => {
       active = false;
+      window.removeEventListener("proofolio:user-updated", onUserUpdated);
+      window.removeEventListener("proofolio:user-cleared", onUserCleared);
     };
   }, [router]);
 
@@ -119,6 +137,7 @@ export function Avatar({ name, src, className = "h-9 w-9 text-[13px]" }: { name:
 const PLACES: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/home", label: "Home", icon: Home },
   { href: "/chat", label: "Messages", icon: MessageSquare },
+  { href: "/ai", label: "AI Assistant", icon: Sparkles },
   { href: "/discover", label: "Discover", icon: Compass },
 ];
 
@@ -131,6 +150,27 @@ export interface CommunityItem {
 }
 
 const COMMUNITY_ITEMS: CommunityItem[] = [
+  {
+    href: "/ai",
+    label: "AI Assistant",
+    sub: "Kimmy & Qwen 2.5",
+    icon: Sparkles,
+    color: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20",
+  },
+  {
+    href: "/memories",
+    label: "Memories & Mood",
+    sub: "Timeline & feelings",
+    icon: History,
+    color: "bg-pink-500/10 text-pink-600 dark:text-pink-400 border-pink-500/20",
+  },
+  {
+    href: "/stories",
+    label: "Stories & Journeys",
+    sub: "Narrated experiences",
+    icon: BookMarked,
+    color: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  },
   {
     href: "/work",
     label: "Work & Projects",
@@ -208,12 +248,15 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
   const router = useRouter();
   const [communityHubOpen, setCommunityHubOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [logoutModalOpen, setLogoutModalOpen] = useState(false);
   const [modalCategory, setModalCategory] = useState<string | undefined>(undefined);
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
   const chatUnread = unreadTotal(useChatInbox(user.id));
   const badgeFor = (href: string) => (href === "/chat" ? chatUnread : 0);
 
   const isCommunityActive = [
+    "/memories",
+    "/stories",
     "/work",
     "/problems",
     "/learning",
@@ -248,9 +291,13 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
     setCreateModalOpen(true);
   }
 
-  async function signOut() {
-    setCachedSessionUser(null);
-    await logoutUser().catch(() => { });
+  function requestSignOut() {
+    setLogoutModalOpen(true);
+  }
+
+  async function handleConfirmLogout(feedback?: LogoutFeedbackPayload) {
+    clearAllAuthStorage();
+    await logoutUser(feedback).catch(() => { });
     forgetAdoptedAppearance();
     router.replace("/login");
   }
@@ -274,6 +321,10 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
           <Suspense>
             <MainLinks isActive={isActive} badgeFor={badgeFor} />
           </Suspense>
+          <SideGroup title="Journey & Reflection">
+            <SideLink href="/memories" label="Memories & Mood" icon={History} active={isActive("/memories")} />
+            <SideLink href="/stories" label="Stories & Journeys" icon={BookMarked} active={isActive("/stories")} />
+          </SideGroup>
           <SideGroup title="Community & Content">
             <SideLink href="/work" label="Work & Projects" icon={Briefcase} active={isActive("/work")} />
             <SideLink href="/problems" label="Problems Solved" icon={Puzzle} active={isActive("/problems")} />
@@ -328,13 +379,21 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
             <button
               type="button"
               onClick={add}
+              aria-label="Add"
+              className="flex h-9 w-9 items-center justify-center rounded-lg bg-ink text-paper shadow-xs transition-transform active:scale-95 md:hidden cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={add}
               className="hidden h-10 items-center gap-2 rounded-lg bg-ink px-5 text-[14px] font-semibold text-paper transition-transform hover:scale-[1.02] active:scale-[0.98] md:flex cursor-pointer"
             >
               <Plus className="h-4 w-4" />
               Add
             </button>
             <NotificationBell />
-            <AccountMenu user={user} onSignOut={signOut} />
+            <AccountMenu user={user} onSignOut={requestSignOut} />
           </div>
         </header>
 
@@ -342,13 +401,14 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
         <CodeBanner />
         <OnboardingFlush />
         <AnnouncementBar />
-        <main className={`flex-1 ${pathname === "/chat" ? "pb-0 md:pb-12 overflow-hidden" : "pb-28 md:pb-12"}`}>{children}</main>
+        <main className={`flex-1 ${pathname === "/chat" || pathname === "/ai" ? "pb-20 md:pb-12 overflow-hidden" : "pb-28 md:pb-12"}`}>{children}</main>
       </div>
 
       <ChatNotifier userId={user.id} />
       <CallOverlay userId={user.id} />
+      {pathname !== "/ai" && <CompanionChatWidget />}
 
-      {/* Mobile bottom bar: Home, Messages, Add, Community Hub, Profile */}
+      {/* Mobile bottom bar: Home, Messages, AI Assistant, Community Hub, Profile */}
       <nav
         aria-label="Main"
         className="fixed inset-x-0 bottom-0 z-40 w-full border-t border-hairline/60 bg-paper/90 backdrop-blur-xl md:hidden"
@@ -361,19 +421,10 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
           {/* 2. Messages */}
           <TabLink href="/chat" label="Messages" icon={MessageSquare} active={isActive("/chat")} badge={badgeFor("/chat")} />
 
-          {/* 3. Center Add Button */}
-          <li className="flex justify-center">
-            <button
-              type="button"
-              onClick={add}
-              aria-label="Add"
-              className="-mt-6 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-paper shadow-lg shadow-black/20 transition-transform active:scale-95 cursor-pointer"
-            >
-              <Plus className="h-6 w-6" />
-            </button>
-          </li>
+          {/* 3. AI Assistant */}
+          <TabLink href="/ai" label="AI Assistant" icon={Sparkles} active={isActive("/ai")} />
 
-          {/* 4. Community Floating Hub Trigger (replaces Discover) */}
+          {/* 4. Community Floating Hub Trigger */}
           <li className="flex justify-center">
             <button
               type="button"
@@ -506,6 +557,13 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
           </div>
         </div>
       )}
+
+      <LogoutModal
+        isOpen={logoutModalOpen}
+        user={user}
+        onClose={() => setLogoutModalOpen(false)}
+        onConfirm={handleConfirmLogout}
+      />
     </div>
   );
 }
@@ -640,6 +698,9 @@ function AccountMenu({ user, onSignOut }: { user: User; onSignOut: () => void })
           </div>
           <Link href="/profile" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">
             <UserRound className="h-4 w-4" /> Profile
+          </Link>
+          <Link href="/ai" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">
+            <Sparkles className="h-4 w-4 text-sky-500" /> AI Assistant
           </Link>
           <Link href="/settings" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">
             <Settings className="h-4 w-4" /> Settings

@@ -113,3 +113,8 @@ class ActivationStatus(BaseModel):
     expires_in_seconds: int | None = None  # only once sent
     suspends_in_seconds: int | None = None  # the account is suspended when this runs out (set once the first code went out)
     resend_in_seconds: int = 0
+
+
+class LogoutRequest(BaseModel):
+    rating: int | None = Field(default=None, ge=1, le=5)
+    feedback: str | None = Field(default=None, max_length=1000)
