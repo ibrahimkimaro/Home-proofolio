@@ -52,7 +52,6 @@ import {
 import { UniversalWorkForm } from "@/components/app/UniversalWorkForm";
 import { ChatNotifier, unreadTotal, useChatInbox } from "@/components/chat/ChatNotifier";
 import { CallOverlay } from "@/components/chat/CallOverlay";
-import { CompanionChatWidget } from "@/components/ai/CompanionChatWidget";
 import { LogoutModal } from "@/components/app/LogoutModal";
 
 export const CAPTURE_EVENT = "proofolio:capture";
@@ -150,13 +149,6 @@ export interface CommunityItem {
 }
 
 const COMMUNITY_ITEMS: CommunityItem[] = [
-  {
-    href: "/ai",
-    label: "AI Assistant",
-    sub: "Kimmy & Qwen 2.5",
-    icon: Sparkles,
-    color: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20",
-  },
   {
     href: "/memories",
     label: "Memories & Mood",
@@ -406,7 +398,6 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
 
       <ChatNotifier userId={user.id} />
       <CallOverlay userId={user.id} />
-      {pathname !== "/ai" && <CompanionChatWidget />}
 
       {/* Mobile bottom bar: Home, Messages, AI Assistant, Community Hub, Profile */}
       <nav
@@ -698,9 +689,6 @@ function AccountMenu({ user, onSignOut }: { user: User; onSignOut: () => void })
           </div>
           <Link href="/profile" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">
             <UserRound className="h-4 w-4" /> Profile
-          </Link>
-          <Link href="/ai" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">
-            <Sparkles className="h-4 w-4 text-sky-500" /> AI Assistant
           </Link>
           <Link href="/settings" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">
             <Settings className="h-4 w-4" /> Settings

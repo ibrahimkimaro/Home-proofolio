@@ -31,22 +31,24 @@ export function VisitorReturnBar({ profileUsername }: VisitorReturnBarProps) {
   const currentPath = typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : "/";
 
   return (
-    <aside aria-label="Visitor Account Navigation" className="fixed top-4 left-3 sm:left-6 z-50 flex items-center gap-2 pointer-events-auto">
+    <aside
+      aria-label="Visitor Account Navigation"
+      className="fixed bottom-[calc(1.25rem+env(safe-area-inset-bottom,0px))] left-4 sm:bottom-auto sm:top-5 sm:left-6 z-40 sm:z-50 flex items-center gap-2 pointer-events-auto"
+    >
       {currentUser ? (
         <Link
           href="/home"
-          className="group flex items-center gap-2 rounded-full border border-neutral-300/80 dark:border-white/15 bg-white/95 dark:bg-[#12141c]/95 px-3.5 py-1.5 text-xs font-bold text-neutral-800 dark:text-neutral-100 shadow-md backdrop-blur-xl transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:scale-105 active:scale-95"
+          className="group flex items-center gap-2 rounded-full border border-black/10 dark:border-white/15 bg-white/95 dark:bg-[#12141c]/95 px-3.5 py-2 sm:py-1.5 text-xs font-bold text-neutral-800 dark:text-neutral-100 shadow-xl backdrop-blur-xl transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:scale-105 active:scale-95"
           title="Return to your own account and feed"
         >
-          <ArrowLeft className="h-3.5 w-3.5 text-neutral-600 dark:text-neutral-300 transition-transform group-hover:-translate-x-0.5" />
+          <ArrowLeft className="h-3.5 w-3.5 text-neutral-500 dark:text-neutral-400 transition-transform group-hover:-translate-x-0.5" />
           <Home className="h-3.5 w-3.5 text-blue-600 dark:text-brass" />
-          <span className="hidden xs:inline sm:inline">Return to My Account</span>
-          <span className="xs:hidden sm:hidden">My Account</span>
+          <span className="inline">Return to My Account</span>
         </Link>
       ) : (
         <Link
           href={`/login?next=${encodeURIComponent(currentPath)}`}
-          className="group flex items-center gap-2 rounded-full border border-neutral-300/80 dark:border-white/15 bg-white/95 dark:bg-[#12141c]/95 px-3.5 py-1.5 text-xs font-bold text-neutral-800 dark:text-neutral-100 shadow-md backdrop-blur-xl transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:scale-105 active:scale-95"
+          className="group flex items-center gap-2 rounded-full border border-black/10 dark:border-white/15 bg-white/95 dark:bg-[#12141c]/95 px-3.5 py-2 sm:py-1.5 text-xs font-bold text-neutral-800 dark:text-neutral-100 shadow-xl backdrop-blur-xl transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:scale-105 active:scale-95"
           title="Sign in to your account"
         >
           <LogIn className="h-3.5 w-3.5 text-blue-600 dark:text-brass" />
