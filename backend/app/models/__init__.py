@@ -1,4 +1,5 @@
 from app.models.ai_chat import AiChatMessage, AiChatSession
+from app.models.ai_usage import AiUsageLog, AiUserQuota
 from app.models.activity import BlockedIp, Broadcast, Notification, SecurityEvent
 from app.models.chat import ChatClear, ChatGroup, ChatGroupMember, ChatMessage, ChatPin
 from app.models.business import Business, BusinessMember, BusinessOffering, BusinessWorkLink, Follow, Role, Watch
@@ -24,6 +25,7 @@ __all__ = [
     "OnboardingQuestion", "OnboardingAnswer", "PlatformSetting", "AdminAction",
     "Notification", "SecurityEvent", "BlockedIp", "Broadcast", "ChatMessage", "ChatGroup",
     "ChatGroupMember", "Cv", "Companion", "Memory", "Story", "StoryChapter",
-    "AiChatSession", "AiChatMessage", "PushSubscription", "ChatPin", "ChatClear", "Like", "Comment", "CvRequest", "VisitorMessage",
+    "AiChatSession", "AiChatMessage", "AiUsageLog", "AiUserQuota", "PushSubscription", "ChatPin", "ChatClear", "Like", "Comment", "CvRequest", "VisitorMessage",
     "Discussion", "DiscussionReply", "DiscussionVote"
 ]
+

@@ -38,10 +38,14 @@ services:
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:homeproofolio@gmail.com}
       WATCHFILES_FORCE_POLLING: "true"
-      # Host Ollama. It must listen on 0.0.0.0 (OLLAMA_HOST=0.0.0.0) to be reachable from the container.
-      AI_PROVIDER: ${AI_PROVIDER:-ollama}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      # AI Provider: "gemini" (default) | "ollama" | "huggingface"
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-AQ.Ab8RN6LXWrFkjoFZ__A0kJqmX89KIwwAiTCj5PHolyZRotX1-g}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
+      # Host Ollama bridge (forwards host 127.0.0.1:11434 to container-accessible 11435)
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:3b}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11435}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -51,6 +55,12 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+
+  ollama-bridge:
+    image: alpine/socat
+    network_mode: host
+    restart: unless-stopped
+    command: tcp-listen:11435,fork,reuseaddr tcp-connect:127.0.0.1:11434
 
   realtime_chat:
     build: ./realtime_chat
@@ -118,6 +128,7 @@ services:
   frontend:
     build: ./home_profio_frontend
     image: home-proofolio-frontend:latest
+    pull_policy: build
     restart: unless-stopped
     command: npm run dev
     environment:
@@ -139,7 +150,9 @@ services:
   # Fast, minified, pre-rendered production instance without HMR overhead.
   # Remote tunnels (ngrok, devtunnel, zrok) connect here!
   frontend_test:
+    build: ./home_profio_frontend
     image: home-proofolio-frontend:latest
+    pull_policy: build
     restart: unless-stopped
     command: sh -c "if [ ! -d /app/.next_test ] || [ ! -f /app/.next_test/BUILD_ID ]; then npm run build:test; fi && npm run start:test"
     environment:
@@ -170,5 +183,6 @@ services:
 
 volumes:
   db_data:
+    name: home_proofolio_db_data
   frontend_test_build:
 

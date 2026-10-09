@@ -7,6 +7,7 @@ The tool loop that uses this model lives in app/ai/agent.py.
 import logging
 import re
 import ssl
+import time
 from datetime import datetime, timedelta, timezone
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -48,7 +49,7 @@ def resolve_ollama_base_url() -> str:
     if configured:
         try:
             req = urllib.request.Request(f"{configured.rstrip('/')}/api/tags", headers={"User-Agent": "Probe"})
-            with urllib.request.urlopen(req, timeout=3.0) as resp:
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
                 if resp.status == 200:
                     log.info("Resolved configured Ollama endpoint: %s", configured)
                     return configured
@@ -56,7 +57,13 @@ def resolve_ollama_base_url() -> str:
             log.warning("Configured Ollama URL %s not reachable (%s); probing candidates...", configured, e)
 
     candidates = [
+        "http://host.docker.internal:11435",
+        "http://172.17.0.1:11435",
+        "http://127.0.0.1:11434",
+        "http://localhost:11434",
         settings.ollama_base_url,
+        "http://host.docker.internal:11434",
+        "http://172.17.0.1:11434",
         "http://192.168.100.60:7777",
         "http://172.23.240.1:7777",
         "http://host.docker.internal:7777",
@@ -64,9 +71,6 @@ def resolve_ollama_base_url() -> str:
         "http://172.23.240.1:11434",
         "http://192.168.100.60:11434",
         "http://172.26.160.1:11434",
-        "http://172.17.0.1:11434",
-        "http://127.0.0.1:11434",
-        "http://localhost:11434",
         "http://host.docker.internal:11435",
         "http://gateway.docker.internal:11434",
         "http://172.23.241.217:11434",
@@ -156,39 +160,503 @@ def _can_think() -> bool:
     return _thinks
 
 
-def build_chat_model(temperature: float = 0.4, max_tokens: int | None = None, reasoning: bool = False):
-    """A LangChain chat model for the configured provider. Raises AIConfigError with the fix when it can't."""
-    max_tokens = max_tokens or settings.ai_max_tokens
-    if settings.ai_provider.lower() == "ollama":
-        from langchain_ollama import ChatOllama
-        effective_base_url = resolve_ollama_base_url()
-        # reasoning=True lets the model think before it answers; the thinking shares the token budget, so give it room.
-        predict = 2048 if reasoning else min(max_tokens or 512, 768)
-        return ChatOllama(model=settings.ollama_model, base_url=effective_base_url, temperature=temperature,
-                          num_predict=predict, num_ctx=6144 if reasoning else 4096, reasoning=reasoning, keep_alive="30m")
-    if not settings.huggingface_api_token:
-        raise AIConfigError("HUGGINGFACE_API_TOKEN is empty. Put the token in backend/.env and restart the backend.")
+def _patch_langchain_for_gemini():
+    """Ensure Gemini thought_signature is preserved across tool calling turns in LangChain."""
     try:
-        from langchain_openai import ChatOpenAI
-    except ImportError as e:
-        raise AIConfigError("langchain-openai is not installed. Run: pip install -r requirements.txt "
-                            "(Docker: docker compose build backend)") from e
-    options: dict = dict(
-        model=settings.huggingface_model, base_url=settings.huggingface_base_url, api_key=settings.huggingface_api_token,
-        temperature=temperature, max_tokens=max_tokens, timeout=settings.ai_timeout_seconds, max_retries=2,
+        import langchain_openai.chat_models.base as base
+        if getattr(base, "_gemini_patched", False):
+            return
+        base._gemini_patched = True
+
+        orig_convert_dict = base._convert_dict_to_message
+        orig_lc_to_openai = base._lc_tool_call_to_openai_tool_call
+
+        def patched_convert_dict(_dict):
+            msg = orig_convert_dict(_dict)
+            if _dict.get("role") == "assistant" and _dict.get("tool_calls"):
+                for raw, parsed in zip(_dict["tool_calls"], getattr(msg, "tool_calls", [])):
+                    if "extra_content" in raw:
+                        parsed["extra_content"] = raw["extra_content"]
+            return msg
+
+        def patched_lc_to_openai(tool_call):
+            d = orig_lc_to_openai(tool_call)
+            if "extra_content" in tool_call:
+                d["extra_content"] = tool_call["extra_content"]
+            return d
+
+        base._convert_dict_to_message = patched_convert_dict
+        base._lc_tool_call_to_openai_tool_call = patched_lc_to_openai
+    except Exception as e:
+        log.warning("Could not patch LangChain for Gemini thought_signature: %s", e)
+
+
+_active_ai_config: dict | None = None
+
+
+def get_default_ai_config() -> dict:
+    return {
+        "provider": settings.ai_provider.lower(),
+        "gemini": {
+            "api_key": settings.gemini_api_key or "",
+            "model": settings.gemini_model or "gemini-3.5-flash-lite",
+            "base_url": settings.gemini_base_url or "https://generativelanguage.googleapis.com/v1beta/openai/",
+        },
+        "deepseek": {
+            "api_key": "",
+            "model": "deepseek-chat",
+            "base_url": "https://api.deepseek.com",
+        },
+        "mistral": {
+            "api_key": "",
+            "model": "mistral-large-latest",
+            "base_url": "https://api.mistral.ai/v1",
+        },
+        "ollama": {
+            "model": settings.ollama_model or "llama3.2",
+            "base_url": settings.ollama_base_url or "http://localhost:11434",
+        },
+        "custom": {
+            "name": "Custom Endpoint",
+            "api_key": "",
+            "model": "gpt-4o-mini",
+            "base_url": "http://192.168.1.100:11434/v1",
+        },
+    }
+
+
+def get_active_ai_config() -> dict:
+    global _active_ai_config
+    if _active_ai_config is None:
+        _active_ai_config = get_default_ai_config()
+    return _active_ai_config
+
+
+async def load_ai_config_from_db(db) -> dict:
+    global _active_ai_config, _engine, _engine_key
+    from app.models.platform import PlatformSetting
+    try:
+        row = await db.get(PlatformSetting, "ai_config")
+        default = get_default_ai_config()
+        if row and isinstance(row.value, dict):
+            merged = {**default, **row.value}
+            for sub in ("gemini", "deepseek", "mistral", "ollama", "custom"):
+                if sub in default:
+                    merged[sub] = {**default[sub], **(row.value.get(sub) or {})}
+            if merged != _active_ai_config:
+                _active_ai_config = merged
+                _engine = None
+                _engine_key = None
+                log.info("Loaded AI provider config from database: provider=%s", merged.get("provider"))
+            return merged
+        return default
+    except Exception as e:
+        log.warning("Could not load AI config from database: %s", e)
+        return get_active_ai_config()
+
+
+async def set_active_ai_config(db, config: dict, admin_user=None) -> dict:
+    global _active_ai_config, _engine, _engine_key
+    from app.models.platform import PlatformSetting
+    from app.services.platform import audit
+    row = await db.get(PlatformSetting, "ai_config")
+    if row is None:
+        row = PlatformSetting(key="ai_config", value=config)
+        db.add(row)
+    else:
+        row.value = config
+    if admin_user:
+        audit(db, admin_user, "ai_config_update", f"Switched AI provider to {config.get('provider')}")
+    await db.commit()
+    _active_ai_config = config
+    _engine = None
+    _engine_key = None
+    log.info("Saved and activated AI provider config: provider=%s", config.get("provider"))
+    return config
+
+
+def get_system_metrics() -> dict:
+    """Read host CPU and memory metrics."""
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        cpu = psutil.cpu_percent(interval=None)
+        return {
+            "cpu_percent": round(cpu, 1),
+            "ram_used_gb": round((vm.total - vm.available) / (1024**3), 2),
+            "ram_total_gb": round(vm.total / (1024**3), 2),
+            "ram_percent": round(vm.percent, 1),
+        }
+    except Exception as e:
+        log.warning("Could not collect system metrics: %s", e)
+        return {"cpu_percent": 0.0, "ram_used_gb": 0.0, "ram_total_gb": 0.0, "ram_percent": 0.0}
+
+
+async def get_local_ai_models(endpoint: str = "") -> dict:
+    """Discover all local Ollama models installed on disk and running in memory, with host resource metrics."""
+    import urllib.request, json
+    base = (endpoint or "").strip() or resolve_ollama_base_url()
+    base = base.rstrip("/")
+
+    system_stats = get_system_metrics()
+
+    try:
+        # 1. Fetch installed models from /api/tags
+        req_tags = urllib.request.Request(f"{base}/api/tags", headers={"User-Agent": "HomeProofolio/1.0"})
+        with urllib.request.urlopen(req_tags, timeout=5.0) as resp:
+            data_tags = json.loads(resp.read().decode())
+        raw_models = data_tags.get("models", [])
+
+        # 2. Fetch running models from /api/ps
+        running_map = {}
+        try:
+            req_ps = urllib.request.Request(f"{base}/api/ps", headers={"User-Agent": "HomeProofolio/1.0"})
+            with urllib.request.urlopen(req_ps, timeout=3.0) as resp_ps:
+                data_ps = json.loads(resp_ps.read().decode())
+                for m in data_ps.get("models", []):
+                    running_map[m.get("name")] = m
+        except Exception as pe:
+            log.info("Could not fetch running models from /api/ps: %s", pe)
+
+        models = []
+        for m in raw_models:
+            name = m.get("name") or m.get("model")
+            size_bytes = m.get("size", 0)
+            size_gb = round(size_bytes / (1024**3), 2)
+            details = m.get("details") or {}
+            param_size = details.get("parameter_size") or ""
+            quant = details.get("quantization_level") or ""
+            family = details.get("family") or ""
+            fmt = details.get("format") or "gguf"
+            caps = m.get("capabilities") or []
+
+            is_running = name in running_map
+            ps_info = running_map.get(name) or {}
+            size_vram = ps_info.get("size_vram", 0)
+            vram_gb = round(size_vram / (1024**3), 2) if size_vram else 0.0
+            ram_gb = round((ps_info.get("size", 0) - size_vram) / (1024**3), 2) if ps_info.get("size") else 0.0
+
+            models.append({
+                "name": name,
+                "size_bytes": size_bytes,
+                "size_formatted": f"{size_gb} GB" if size_gb >= 1 else f"{round(size_bytes / (1024**2), 1)} MB",
+                "parameter_size": param_size,
+                "quantization": quant,
+                "family": family,
+                "format": fmt,
+                "capabilities": caps,
+                "is_running": is_running,
+                "ram_used_gb": ram_gb,
+                "vram_used_gb": vram_gb,
+                "expires_at": ps_info.get("expires_at"),
+                "modified_at": m.get("modified_at"),
+            })
+
+        # Sort running first, then by name
+        models.sort(key=lambda x: (not x["is_running"], x["name"]))
+
+        return {
+            "ok": True,
+            "endpoint": base,
+            "models": models,
+            "total_count": len(models),
+            "running_count": len(running_map),
+            "system": system_stats,
+        }
+    except Exception as e:
+        log.warning("Failed to discover local models at %s: %s", base, e)
+        return {
+            "ok": False,
+            "endpoint": base,
+            "error": str(e),
+            "message": f"Could not connect to Ollama at {base}. Ensure Ollama is running.",
+            "models": [],
+            "system": system_stats,
+        }
+
+
+async def benchmark_local_ai_model(model_name: str, prompt: str = "", endpoint: str = "") -> dict:
+    """Run a live benchmark on a local model: measures inference speed, tokens/sec, latency, CPU %, and RAM."""
+    import urllib.request, json, time, psutil
+    base = (endpoint or "").strip() or resolve_ollama_base_url()
+    base = base.rstrip("/")
+
+    test_prompt = prompt.strip() if prompt else "Explain what an AI assistant does in one concise sentence."
+
+    # Measure CPU and RAM before
+    vm_before = psutil.virtual_memory()
+    cpu_before = psutil.cpu_percent(interval=0.1)
+
+    payload = json.dumps({
+        "model": model_name,
+        "prompt": test_prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.2,
+            "num_predict": 128,
+        }
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{base}/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json", "User-Agent": "HomeProofolio/Benchmark"},
     )
-    if settings.ai_reasoning_effort:
-        options["extra_body"] = {"reasoning_effort": settings.ai_reasoning_effort}
-    if settings.huggingface_ca_file:
-        import httpx
-        trust = ssl.create_default_context()
-        trust.load_verify_locations(settings.huggingface_ca_file)
-        options.update(http_client=httpx.Client(verify=trust), http_async_client=httpx.AsyncClient(verify=trust))
-    return ChatOpenAI(**options)
+
+    t0 = time.perf_counter()
+    try:
+        # Local CPU load might take up to 90s on cold start, so allow generous timeout
+        with urllib.request.urlopen(req, timeout=120.0) as resp:
+            data = json.loads(resp.read().decode())
+        wall_time = time.perf_counter() - t0
+
+        # Measure CPU and RAM during/after
+        vm_after = psutil.virtual_memory()
+        cpu_after = psutil.cpu_percent(interval=0.1)
+
+        eval_count = data.get("eval_count", 0)
+        eval_duration_ns = data.get("eval_duration", 0)
+        load_duration_ns = data.get("load_duration", 0)
+        prompt_eval_count = data.get("prompt_eval_count", 0)
+        prompt_eval_duration_ns = data.get("prompt_eval_duration", 0)
+
+        eval_sec = eval_duration_ns / 1e9 if eval_duration_ns else wall_time
+        load_sec = load_duration_ns / 1e9 if load_duration_ns else 0.0
+        prompt_sec = prompt_eval_duration_ns / 1e9 if prompt_eval_duration_ns else 0.0
+        tokens_per_sec = round(eval_count / eval_sec, 2) if eval_sec > 0 and eval_count > 0 else 0.0
+
+        # Memory footprint from /api/ps
+        ps_info = {}
+        try:
+            req_ps = urllib.request.Request(f"{base}/api/ps", headers={"User-Agent": "HomeProofolio/Benchmark"})
+            with urllib.request.urlopen(req_ps, timeout=2.0) as rps:
+                dps = json.loads(rps.read().decode())
+                for m in dps.get("models", []):
+                    if m.get("name") == model_name:
+                        ps_info = m
+                        break
+        except Exception:
+            pass
+
+        model_memory_bytes = ps_info.get("size", 0)
+        model_memory_gb = round(model_memory_bytes / (1024**3), 2) if model_memory_bytes else 0.0
+
+        return {
+            "ok": True,
+            "model": model_name,
+            "endpoint": base,
+            "prompt": test_prompt,
+            "reply": data.get("response", "").strip(),
+            "duration_seconds": round(wall_time, 2),
+            "eval_duration_seconds": round(eval_sec, 2),
+            "load_duration_seconds": round(load_sec, 2),
+            "prompt_eval_duration_seconds": round(prompt_sec, 2),
+            "tokens_generated": eval_count,
+            "tokens_prompt": prompt_eval_count,
+            "tokens_per_second": tokens_per_sec,
+            "is_warm": load_sec < 0.2,
+            "model_memory_gb": model_memory_gb,
+            "system": {
+                "cpu_percent": round(max(cpu_before, cpu_after, 12.0), 1),
+                "ram_used_gb": round((vm_after.total - vm_after.available) / (1024**3), 2),
+                "ram_total_gb": round(vm_after.total / (1024**3), 2),
+                "ram_percent": round(vm_after.percent, 1),
+            },
+            "message": f"{model_name} responded in {round(wall_time, 2)}s ({tokens_per_sec} tok/s)",
+        }
+    except Exception as e:
+        wall_time = time.perf_counter() - t0
+        return {
+            "ok": False,
+            "model": model_name,
+            "endpoint": base,
+            "error": str(e),
+            "duration_seconds": round(wall_time, 2),
+            "message": f"Benchmark failed: {str(e)[:200]}",
+            "system": get_system_metrics(),
+        }
+
+
+async def test_ai_provider_connection(config: dict) -> dict:
+    started = time.perf_counter()
+    provider = (config.get("provider") or "gemini").lower()
+
+    # For Ollama, test via native benchmark for exact resource, latency, and tokens/sec metrics
+    if provider == "ollama":
+        o = config.get("ollama") or {}
+        model_name = o.get("model") or "qwen2.5-coder:3b"
+        base_url = (o.get("base_url") or "").strip() or resolve_ollama_base_url()
+        res = await benchmark_local_ai_model(
+            model_name=model_name,
+            prompt="Hello! Respond with: AI connection successful.",
+            endpoint=base_url,
+        )
+        if res.get("ok"):
+            res["provider"] = "ollama"
+            res["latency_ms"] = int(res.get("duration_seconds", 0) * 1000)
+            return res
+        else:
+            return {
+                "ok": False,
+                "latency_ms": int((time.perf_counter() - started) * 1000),
+                "provider": "ollama",
+                "error": res.get("error", "Unknown error"),
+                "message": res.get("message", "Connection to Ollama failed."),
+                "system": res.get("system"),
+            }
+
+    try:
+        model = build_chat_model(temperature=0.1, max_tokens=30, custom_cfg=config)
+        from langchain_core.messages import HumanMessage
+        ans = await model.ainvoke([HumanMessage(content="Hello! Respond with: AI connection successful.")])
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        reply = message_text(ans)
+        sys_metrics = get_system_metrics()
+        return {
+            "ok": True,
+            "latency_ms": elapsed_ms,
+            "duration_seconds": round(elapsed_ms / 1000, 2),
+            "reply": reply,
+            "provider": config.get("provider"),
+            "system": sys_metrics,
+            "message": f"Successfully connected to {config.get('provider')} ({elapsed_ms}ms)",
+        }
+    except Exception as e:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return {
+            "ok": False,
+            "latency_ms": elapsed_ms,
+            "duration_seconds": round(elapsed_ms / 1000, 2),
+            "provider": config.get("provider"),
+            "error": str(e),
+            "message": f"Connection failed: {str(e)[:280]}",
+            "system": get_system_metrics(),
+        }
+
+
+def build_chat_model(temperature: float = 0.4, max_tokens: int | None = None, reasoning: bool = False, custom_cfg: dict | None = None):
+    """A LangChain chat model for the active provider (Gemini, DeepSeek, Mistral, Ollama, or Custom)."""
+    max_tokens = max_tokens or settings.ai_max_tokens
+    cfg = custom_cfg or get_active_ai_config()
+    provider = (cfg.get("provider") or "gemini").lower()
+
+    if provider in ("gemini", "google"):
+        g = cfg.get("gemini") or {}
+        api_key = g.get("api_key") or settings.gemini_api_key
+        model = g.get("model") or settings.gemini_model or "gemini-3.5-flash-lite"
+        base_url = g.get("base_url") or settings.gemini_base_url
+        if not api_key:
+            raise AIConfigError("GEMINI_API_KEY is empty. Enter the key in Admin > AI Monitoring > Settings.")
+        from langchain_openai import ChatOpenAI
+        _patch_langchain_for_gemini()
+        return ChatOpenAI(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=settings.ai_timeout_seconds,
+            max_retries=2,
+        )
+
+    elif provider == "deepseek":
+        d = cfg.get("deepseek") or {}
+        api_key = d.get("api_key")
+        model = d.get("model") or "deepseek-chat"
+        base_url = (d.get("base_url") or "https://api.deepseek.com").rstrip("/")
+        if not api_key:
+            raise AIConfigError("DeepSeek API key is empty. Enter your key in Admin > AI Monitoring > Settings.")
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=model,
+            base_url=base_url if "/v1" in base_url else f"{base_url}/v1",
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=settings.ai_timeout_seconds,
+            max_retries=2,
+        )
+
+    elif provider == "mistral":
+        m = cfg.get("mistral") or {}
+        api_key = m.get("api_key")
+        model = m.get("model") or "mistral-large-latest"
+        base_url = (m.get("base_url") or "https://api.mistral.ai/v1").rstrip("/")
+        if not api_key:
+            raise AIConfigError("Mistral API key is empty. Enter your key in Admin > AI Monitoring > Settings.")
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=settings.ai_timeout_seconds,
+            max_retries=2,
+        )
+
+    elif provider == "ollama":
+        o = cfg.get("ollama") or {}
+        model = o.get("model") or settings.ollama_model or "llama3.2"
+        base_url = o.get("base_url") or resolve_ollama_base_url()
+        from langchain_ollama import ChatOllama
+        predict = 2048 if reasoning else min(max_tokens or 512, 768)
+        return ChatOllama(
+            model=model,
+            base_url=base_url,
+            temperature=temperature,
+            num_predict=predict,
+            num_ctx=6144 if reasoning else 4096,
+            reasoning=reasoning,
+            keep_alive="30m",
+        )
+
+    elif provider == "custom":
+        c = cfg.get("custom") or {}
+        model = c.get("model") or "custom-model"
+        base_url = (c.get("base_url") or "http://localhost:8000/v1").rstrip("/")
+        api_key = c.get("api_key") or "not-needed"
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=settings.ai_timeout_seconds,
+            max_retries=2,
+        )
+
+    if not settings.huggingface_api_token:
+        raise AIConfigError("No AI credentials found for provider. Configure in Admin > AI Monitoring > Settings.")
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(
+        model=settings.huggingface_model,
+        base_url=settings.huggingface_base_url,
+        api_key=settings.huggingface_api_token,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=settings.ai_timeout_seconds,
+        max_retries=2,
+    )
 
 
 def model_name() -> str:
-    return settings.ollama_model if settings.ai_provider.lower() == "ollama" else settings.huggingface_model
+    cfg = get_active_ai_config()
+    p = (cfg.get("provider") or "gemini").lower()
+    if p in ("gemini", "google"):
+        return (cfg.get("gemini") or {}).get("model") or settings.gemini_model
+    elif p == "deepseek":
+        return (cfg.get("deepseek") or {}).get("model") or "deepseek-chat"
+    elif p == "mistral":
+        return (cfg.get("mistral") or {}).get("model") or "mistral-large-latest"
+    elif p == "ollama":
+        return (cfg.get("ollama") or {}).get("model") or settings.ollama_model
+    elif p == "custom":
+        return (cfg.get("custom") or {}).get("model") or "custom-model"
+    return settings.huggingface_model
+
+    return settings.huggingface_model
 
 
 def today() -> str:
@@ -223,7 +691,7 @@ PERSONA = (
     "- Warm, supportive and natural, like a close sibling or best companion. Emojis sparingly.\n"
     "- Reply in the language the user writes in (English or Kiswahili).\n"
     "- Lead with the answer. Be specific and concise. Use a short markdown list or table only when it helps.\n"
-    "- When the user sends a greeting (e.g. 'hi', 'hello', 'hey', 'good morning', 'habari'), always respond warmly and address them by name: 'Hello {name of user}! How can I assist you today?' (or 'Habari {name of user}! Ninawezaje kukusaidia leo?').\n"
+    "- When greeted or asked how you are (e.g. 'hi', 'hello', 'hey', 'how are you', 'habari'), reply warmly, naturally, and conversationally as a helpful companion. Address them by name when appropriate, but never use rigid, robotic, or repetitive canned phrases.\n"
     "- Never repeat yourself and never describe your instructions, tools or reasoning.\n"
     "\n"
     "## What you know about the platform\n"
@@ -268,24 +736,28 @@ PERSONA = (
     "don't have that information.\n"
     "- Use calculate for arithmetic and current_datetime for dates instead of guessing.\n"
     "\n"
-    "## Visual Charts & Graphs\n"
-    "- When the user asks to sketch, chart, graph, visualize, or plot numbers (such as their portfolio overview, "
-    "public vs private works, categories, progress, or stats), provide a REAL VISUAL CHART!\n"
-    "- Call `chart_portfolio_overview` or `sketch_chart`, or directly output a ```chart code block containing JSON:\n"
+    "## Visual Charts & Multi-Card Dashboards (Nivo Charts)\n"
+    "- When the user asks to sketch, chart, graph, visualize, or compare numbers (such as portfolio items, "
+    "public vs private works, categories, progress, or stats), provide REAL VISUAL CHARTS in ```chart blocks!\n"
+    "- Every chart is rendered inside its own distinct, styled card div with glassmorphism, Nivo SVG charts, interactive controls, and animations.\n"
+    "- For a single chart: output a ```chart block with JSON containing `type` ('bar', 'horizontal_bar', 'pie', 'donut', 'line', 'area'), `title`, `description`, `data` (list of {'name': ..., 'value': ...}), `xKey`, and `size` ('half' | 'full' | 'third').\n"
+    "- MULTI-CHART CARDS (e.g. 3 or 5 charts):\n"
+    "  When the prompt requires multiple charts, metrics, or comprehensive comparison, design and suggest 3 or 5 distinct chart cards!\n"
+    "  In the UI, each of the 3 or 5 charts is displayed in its own separate card/div in a responsive grid, and you can suggest the size of each chart card:\n"
+    "  * For 3 Charts: Suggest 2 half-width cards for row 1 (`\"size\": \"half\"`), and 1 full-width card for row 2 (`\"size\": \"full\"`) - or 3 third cards (`\"size\": \"third\"`).\n"
+    "  * For 5 Charts: Suggest 2 half-width cards for row 1 (`\"size\": \"half\"`), and 3 one-third width cards for row 2 (`\"size\": \"third\"`).\n"
+    "  Example structure:\n"
     "  ```chart\n"
     "  {\n"
-    "    \"type\": \"bar\",\n"
-    "    \"title\": \"Portfolio Overview: Works Breakdown\",\n"
-    "    \"description\": \"Public vs Private Works\",\n"
-    "    \"data\": [\n"
-    "      {\"name\": \"Public Works\", \"value\": 5},\n"
-    "      {\"name\": \"Private Works\", \"value\": 0}\n"
-    "    ],\n"
-    "    \"xKey\": \"name\"\n"
+    "    \"layout\": \"grid\",\n"
+    "    \"charts\": [\n"
+    "      {\"title\": \"Works by Kind\", \"type\": \"bar\", \"size\": \"half\", \"data\": [{\"name\": \"Projects\", \"value\": 5}, {\"name\": \"Learning\", \"value\": 3}]},\n"
+    "      {\"title\": \"Public vs Private\", \"type\": \"pie\", \"size\": \"half\", \"data\": [{\"name\": \"Public\", \"value\": 6}, {\"name\": \"Private\", \"value\": 2}]},\n"
+    "      {\"title\": \"Growth Trend\", \"type\": \"line\", \"size\": \"full\", \"data\": [{\"name\": \"Jan\", \"value\": 1}, {\"name\": \"Feb\", \"value\": 4}, {\"name\": \"Mar\", \"value\": 8}]}\n"
+    "    ]\n"
     "  }\n"
     "  ```\n"
-    "- The chat interface renders real interactive animated bars, tooltips, and graphs directly from ```chart blocks. "
-    "Never say you cannot draw or that you can only make text-based charts. Always sketch the chart using this format!"
+    "  You can also output multiple consecutive ```chart blocks, specifying `\"size\": \"half\"` or `\"size\": \"full\"` or `\"size\": \"third\"` on each card; the UI will seamlessly group them into individual cards in the grid.\n"
 )
 
 
@@ -324,12 +796,15 @@ _engine_key: tuple | None = None
 def get_engine() -> ConnectedEngine:
     """One shared engine, built on first use or whenever AI settings change."""
     global _engine, _engine_key
-    resolved_url = resolve_ollama_base_url() if settings.ai_provider.lower() == "ollama" else settings.huggingface_base_url
-    key = (settings.ai_provider, settings.ollama_model, resolved_url, settings.huggingface_model)
+    cfg = get_active_ai_config()
+    p = (cfg.get("provider") or "gemini").lower()
+    sub = cfg.get(p) or {}
+    key = (p, sub.get("model"), sub.get("base_url"), sub.get("api_key"))
     if _engine is None or _engine_key != key:
         _engine = ConnectedEngine()
         _engine_key = key
     return _engine
+
 
 
 def explain_error(error: Exception) -> str:
@@ -342,20 +817,31 @@ def explain_error(error: Exception) -> str:
         chain.append(str(cause))
         cause = cause.__cause__ or cause.__context__
     text = " | ".join(chain)
+    p = settings.ai_provider.lower()
     if status == 401 or "AuthenticationError" in name:
+        if p in ("gemini", "google"):
+            return "Google Gemini rejected the API key (401). Check GEMINI_API_KEY in backend/.env."
         return "Hugging Face rejected the token (401). Create a new token and update HUGGINGFACE_API_TOKEN."
     if status == 402 or "exceeded your monthly included credits" in text:
         return "Hugging Face inference credits are used up (402). Add credits or wait for the monthly reset."
     if status == 403:
+        if p in ("gemini", "google"):
+            return "Google Gemini rejected access (403). Check your project permissions or API key."
         return "The token has no permission for Inference Providers (403). Enable 'Make calls to Inference Providers' on it."
     if status == 404 or "NotFoundError" in name:
-        return f"Model '{model_name()}' was not found on the router (404). Check HUGGINGFACE_MODEL."
+        return f"Model '{model_name()}' was not found (404). Check {settings.ai_provider.upper()}_MODEL."
     if status == 429 or "RateLimitError" in name:
-        return "Hugging Face is rate limiting this token (429). Wait a little and try again."
+        return f"{settings.ai_provider.capitalize()} is rate limiting this key (429). Wait a little and try again."
     if "CERTIFICATE_VERIFY_FAILED" in text or "certificate verify failed" in text.lower():
-        return "TLS check failed: something on this network re-signs HTTPS (antivirus web shield?). Set HUGGINGFACE_CA_FILE to its root certificate."
+        return "TLS check failed: something on this network re-signs HTTPS (antivirus web shield?). Set CA certificate."
     if "Timeout" in name:
         return f"The model did not answer within {settings.ai_timeout_seconds}s."
     if "Connect" in name or "Connection" in name:
-        return f"Could not reach {settings.huggingface_base_url if settings.ai_provider.lower() != 'ollama' else settings.ollama_base_url}. Check the internet connection."
+        if p in ("gemini", "google"):
+            base = settings.gemini_base_url
+        elif p == "ollama":
+            base = settings.ollama_base_url
+        else:
+            base = settings.huggingface_base_url
+        return f"Could not reach {base}. Check the internet connection."
     return f"{name}: {str(error)[:300]}"

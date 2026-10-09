@@ -12,6 +12,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@nivo/bar": "^0.99.0",
+    "@nivo/core": "^0.99.0",
+    "@nivo/line": "^0.99.0",
+    "@nivo/pie": "^0.99.0",
     "@types/phoenix": "^1.6.7",
     "lucide-react": "^1.49.0",
     "motion": "^13.4.6",

@@ -27,6 +27,7 @@ import { WorksSection } from "@/components/admin/WorksSection";
 import { SecuritySection } from "@/components/admin/SecuritySection";
 import { AnalyticsSection } from "@/components/admin/AnalyticsSection";
 import { AiSection } from "@/components/admin/AiSection";
+import { AiMonitoringSection } from "@/components/admin/AiMonitoringSection";
 import { OnboardingSection } from "@/components/admin/OnboardingSection";
 import { AuditSection, BusinessesSection, PlatformSection, TemplatesSection } from "@/components/admin/ManageSections";
 import { SupportSection } from "@/components/admin/SupportSection";
@@ -175,6 +176,7 @@ function AdminDashboard({ admin, onLogout }: { admin: User; onLogout: () => void
       {section === "security" && <SecuritySection otps={otps} onChanged={loadData} onError={setError} />}
       {section === "analytics" && <AnalyticsSection onError={setError} />}
       {section === "ai" && <AiSection onError={setError} />}
+      {section === "ai_monitoring" && <AiMonitoringSection onError={setError} />}
       {section === "onboarding" && <OnboardingSection onError={setError} />}
       {section === "templates" && <TemplatesSection onError={setError} />}
       {section === "businesses" && <BusinessesSection onError={setError} />}

@@ -299,10 +299,17 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
   useEffect(() => {
     if (suspended) router.replace("/suspended");
   }, [suspended, router]);
+  // overflow-x:hidden on body/wrapper makes them scroll containers and breaks the sticky sidebar/header; clip doesn't.
+  useEffect(() => {
+    document.body.style.overflowX = "clip";
+    return () => {
+      document.body.style.overflowX = "";
+    };
+  }, []);
   if (suspended) return <div className="min-h-screen bg-paper-dim" />;
 
   return (
-    <div className="theme-mono pf-ambient flex min-h-screen w-full max-w-full overflow-x-hidden bg-paper-dim text-ink-800">
+    <div className="theme-mono pf-ambient flex min-h-screen w-full max-w-full overflow-x-clip bg-paper-dim text-ink-800">
       {/* Desktop sidebar: the places, community, and public face */}
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col overflow-y-auto border-r border-hairline bg-paper px-3 md:flex">
         <Link href="/home" className="flex h-16 shrink-0 items-center gap-2.5 px-3">

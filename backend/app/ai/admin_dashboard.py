@@ -67,7 +67,7 @@ _SHARED_RULES = (
     "- Every number you write must come from a tool result in this conversation. Never estimate or invent. If you "
     "have no tool result for it, say you don't know or offer to check.\n"
     "- When the admin names a member, call find_member first.\n"
-    "- You CAN draw pie/donut charts (view=\"pie\") and make a downloadable PDF (export_pdf, after the charts). Never say you cannot.\n"
+    "- You CAN sketch real interactive Nivo visual charts in ```chart blocks, draw pie/donut/bar/line charts, and make a downloadable PDF (export_pdf, after the charts). For multi-chart dashboards (e.g. 3 or 5 charts), each chart is rendered in its own distinct card div with suggested size ('half' | 'third' | 'full'). Never say you cannot.\n"
     "- You only read. If asked to change, delete or message something, say so and name the admin section "
     "that does it (Users, Works & Proofs, Messages, Activation codes, Threats).\n"
     "- You see counts only, never the private content of members.\n"
@@ -94,7 +94,42 @@ PREPARE_PERSONA = (
     "\n" + _SHARED_RULES
 )
 
-PERSONAS = {"build": ADMIN_PERSONA, "chat": CHAT_PERSONA + WORKSPACE_NOTE, "prepare": PREPARE_PERSONA}
+VIDEO_PERSONA = (
+    "You are the video production director and storytelling assistant inside the HOME PROOFOLIO admin panel. "
+    "The admin asks you to create engaging video concepts, feature reveal teasers, member showcase storyboards, "
+    "or social media video scripts (Reels, TikTok, YouTube Shorts, LinkedIn) based on platform growth.\n"
+    "- If relevant, pull real platform facts with add_platform_chart (e.g. signups, top skills, or member journeys).\n"
+    "- Structure your output clearly:\n"
+    "  1. Concept Title & Target Duration (e.g., 30s Reel, 60s Showcase)\n"
+    "  2. Hook (0-3s) with visual action and punchy audio hook\n"
+    "  3. Scene-by-Scene Breakdown (Scene | Visual Action & Camera Angles | Voiceover / Sound Effects | On-screen Text)\n"
+    "  4. Call-To-Action (CTA) & Caption / Hashtags for publishing\n"
+    "- Provide creative, cinematic direction with clear pacing and tone.\n"
+    "\n" + _SHARED_RULES
+)
+
+IMAGE_PERSONA = (
+    "You are the visual creative director and generative image prompt engineer inside the HOME PROOFOLIO admin panel. "
+    "The admin asks you for visual assets, social promotional graphics, hero illustration concepts, "
+    "or generative AI prompts for platform announcements and branding.\n"
+    "- Provide vivid, production-ready AI image prompts (tailored for Midjourney, Imagen, DALL-E 3, or Stable Diffusion).\n"
+    "- Structure your output clearly:\n"
+    "  1. Creative Concept & Visual Theme\n"
+    "  2. Exact Copy-Paste Prompt (including medium, subject, composition, lighting, camera lens, color palette, aspect ratio)\n"
+    "  3. Design & Color Palette breakdown (mood hues and palette)\n"
+    "  4. Text Overlay / Typography recommendations for social or web banners\n"
+    "- Make sure prompts match the modern, sleek aesthetic of HOME PROOFOLIO.\n"
+    "\n" + _SHARED_RULES
+)
+
+PERSONAS = {
+    "build": ADMIN_PERSONA,
+    "chat": CHAT_PERSONA + WORKSPACE_NOTE,
+    "prepare": PREPARE_PERSONA,
+    "video": VIDEO_PERSONA,
+    "image": IMAGE_PERSONA,
+}
+
 
 
 def _label(value) -> str:
@@ -373,14 +408,45 @@ def _tools(board: Dashboard) -> list[StructuredTool]:
 
 
 async def build_dashboard(engine: ConnectedEngine, db: AsyncSession, admin_name: str, prompt: str, history: list[str],
-                          mode: str = "build") -> dict:
+                          mode: str = "chat", admin_id=None) -> dict:
     """One admin request -> {"reply": the model's text, "widgets": the charts, "seconds": ...}.
 
-    mode: "build" = a dashboard of charts, "chat" = plain conversation, "prepare" = a written piece (report, story...).
+    mode: "chat" = plain conversation (default), "build" = dashboard of charts, "prepare" = written piece, "video" = storyboard, "image" = prompt design.
     """
+    from app.ai.usage_monitor import record_ai_usage
+    from app.ai.engine import load_ai_config_from_db
+    await load_ai_config_from_db(db)
     started = time.perf_counter()
+
     prompt = sanitize_user_prompt(prompt.strip())
     board = Dashboard(db)
-    system = system_prompt(persona=PERSONAS.get(mode, ADMIN_PERSONA), who=f"The admin {admin_name}.")
-    result = await run_agent(engine.llm, system, history_messages(earlier_turns(history, prompt)), prompt, _tools(board), max_steps=6)
-    return {"reply": result.text, "widgets": board.widgets, "download": board.download, "tools_used": result.tools_used, "seconds": round(time.perf_counter() - started, 2)}
+    system = system_prompt(persona=PERSONAS.get(mode, CHAT_PERSONA), who=f"The admin {admin_name}.")
+    try:
+        result = await run_agent(engine.llm, system, history_messages(earlier_turns(history, prompt)), prompt, _tools(board), max_steps=6)
+        elapsed_sec = round(time.perf_counter() - started, 2)
+        await record_ai_usage(
+            db,
+            user_id=admin_id,
+            feature=f"admin_{mode}",
+            endpoint="/ai/admin/dashboard",
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            total_tokens=result.total_tokens,
+            latency_ms=int(elapsed_sec * 1000),
+            status="success",
+        )
+        return {"reply": result.text, "widgets": board.widgets, "download": board.download, "tools_used": result.tools_used, "seconds": elapsed_sec}
+    except Exception as exc:
+        elapsed_sec = round(time.perf_counter() - started, 2)
+        status_flag = "rate_limited" if "429" in str(exc) or "quota" in str(exc).lower() else "error"
+        await record_ai_usage(
+            db,
+            user_id=admin_id,
+            feature=f"admin_{mode}",
+            endpoint="/ai/admin/dashboard",
+            latency_ms=int(elapsed_sec * 1000),
+            status=status_flag,
+            error_message=str(exc)[:400],
+        )
+        raise
+

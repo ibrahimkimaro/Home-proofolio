@@ -25,8 +25,12 @@ class Settings(BaseSettings):
     # Where the site lives, for links in emails when the request has no Origin (CV links).
     site_url: str = "http://localhost:3001"
 
-    # AI assistant (app/ai). "huggingface" = hosted model through the Hugging Face router, "ollama" = local model.
-    ai_provider: str = "ollama"
+    # AI assistant (app/ai). "gemini" = Google Gemini, "ollama" = local model, "huggingface" = Hugging Face router.
+    ai_provider: str = "gemini"
+    # Google Gemini API key and configuration (used when AI_PROVIDER=gemini)
+    gemini_api_key: str = Field("", validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_API_KEY"))
+    gemini_model: str = "gemini-3.5-flash-lite"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     # Hugging Face token with the "Make calls to Inference Providers" permission. Keep it in backend/.env only
     # (never in .env.example, which is committed). Any of these names works.
     huggingface_api_token: str = Field("", validation_alias=AliasChoices("HUGGINGFACE_API_TOKEN", "HF_API_TOKEN", "HF_TOKEN"))
@@ -41,9 +45,9 @@ class Settings(BaseSettings):
     ai_max_tool_steps: int = 5  # tool rounds per chat turn before the model must answer
     # Extra MCP servers for the dev dashboard, as JSON: {"name": {"command": "npx", "args": [...]}} or {"name": {"url": "https://.../mcp"}}
     mcp_servers: dict = {}
-    # Local Ollama, used when AI_PROVIDER=ollama. From inside Docker use http://host.docker.internal:11434.
-    ollama_base_url: str = "http://host.docker.internal:11434"
-    ollama_model: str = "qwen2.5:7b"
+    # Local Ollama, used when AI_PROVIDER=ollama. From inside Docker use http://host.docker.internal:11435 (bridged).
+    ollama_base_url: str = "http://host.docker.internal:11435"
+    ollama_model: str = "qwen2.5-coder:3b"
 
     model_config = SettingsConfigDict(
         env_file=".env",

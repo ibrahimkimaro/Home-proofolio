@@ -335,7 +335,7 @@ async def get_my_messages(db: AsyncSession, user_id, limit: int = 15) -> list[di
     ]
 
 
-async def sketch_chart(db: AsyncSession, user_id, title: str, data: list[dict], chart_type: str = "bar", description: str = "", x_key: str = "name") -> str:
+async def sketch_chart(db: AsyncSession, user_id, title: str, data: list[dict], chart_type: str = "bar", description: str = "", x_key: str = "name", size: str = "full") -> str:
     """Sketch a custom visual interactive chart with bars, lines, or pie to display right in the chat conversation."""
     import json
     spec = {
@@ -344,8 +344,19 @@ async def sketch_chart(db: AsyncSession, user_id, title: str, data: list[dict], 
         "description": description,
         "data": data,
         "xKey": x_key or "name",
+        "size": size or "full",
     }
     return f"```chart\n{json.dumps(spec, ensure_ascii=False, indent=2)}\n```"
+
+
+async def sketch_multi_charts(db: AsyncSession, user_id, charts: list[dict], layout: str = "grid") -> str:
+    """Sketch 2, 3, 4, or 5 visual interactive chart cards in a responsive multi-card dashboard."""
+    import json
+    payload = {
+        "layout": layout or "grid",
+        "charts": charts,
+    }
+    return f"```chart\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n```"
 
 
 # ---- argument schemas (what the model is told it may pass) ----------------------------------------
@@ -395,9 +406,15 @@ class ChartPortfolioArgs(BaseModel):
 class SketchChartArgs(BaseModel):
     title: str = Field(description="Title of the chart.")
     data: list[dict] = Field(description="List of data points, each with 'name' (label) and 'value' (number) or multiple numeric keys.")
-    chart_type: str = Field("bar", description="Type of visual chart: 'bar', 'horizontal_bar', 'line', 'area', 'pie'.")
+    chart_type: str = Field("bar", description="Type of visual chart: 'bar', 'horizontal_bar', 'line', 'area', 'pie', 'donut'.")
     description: str = Field("", description="Optional subtitle or summary.")
     x_key: str = Field("name", description="Key for the X-axis / category (default: 'name').")
+    size: str = Field("full", description="Card size in dashboard: 'half' (sits side-by-side with another chart), 'full' (spans entire width), or 'third'.")
+
+
+class SketchMultiChartsArgs(BaseModel):
+    charts: list[dict] = Field(description="List of 2 to 5 chart objects. Each chart object has: 'title', 'data', 'chart_type' ('bar'|'pie'|'line'), 'description', and 'size' ('half'|'full'|'third').")
+    layout: str = Field("grid", description="Dashboard card layout: 'grid' or 'stack'.")
 
 
 class CreateMemoryArgs(BaseModel):
@@ -480,7 +497,8 @@ TOOLS = {
     "get_my_database_summary": (get_my_database_summary, "Overview of all the user's database records: profile details (name, email, phone, bio), roles, CV, work/portfolio items, and chat messages summary. Call when user asks for all their database data or profile and work combined.", NoArgs, WORK),
     "get_my_messages": (get_my_messages, "The user's recent direct and group chat messages (from the database), newest first. Use whenever user asks about their messages, chats, DMs, or conversations.", LimitArgs, WORK),
     "chart_portfolio_overview": (chart_portfolio_overview, "Sketch and render a real interactive visual chart (bars, pie, etc.) of the user's portfolio overview (public vs private items, by type, or by status) directly in the chat. Call whenever user asks to chart, sketch, or visualize their portfolio or work numbers.", ChartPortfolioArgs, WORK),
-    "sketch_chart": (sketch_chart, "Sketch and render an interactive visual chart (bars, line, pie, area) directly in the chat from custom data numbers. Call whenever user asks for a chart, graph, or visual bars of any numbers.", SketchChartArgs, WORK),
+    "sketch_chart": (sketch_chart, "Sketch and render an interactive visual chart card (bars, line, pie, area) directly in the chat from custom data numbers. Call whenever user asks for a chart, graph, or visual bars of any numbers.", SketchChartArgs, WORK),
+    "sketch_multi_charts": (sketch_multi_charts, "Sketch 2, 3, 4, or 5 visual interactive chart cards in a responsive multi-card dashboard (cards side-by-side or stacked). Call whenever the user asks for multiple charts, comparison, or full visual metrics.", SketchMultiChartsArgs, WORK),
     "get_work_summary": (get_work_summary, "Overview of ALL the user's items: total, counts by state and by kind "
                          "(work, learning, achievement, problem, capture), and the 10 most recent. Call this first for broad questions about their work, progress or portfolio.", NoArgs, WORK),
     "search_my_work": (search_my_work, "Find the user's own items of any kind (work/projects, learning and ideas, achievements, "

@@ -1594,12 +1594,273 @@ export interface AiDashboard {
 /** Full URL of an API path, for links the browser opens itself (downloads). */
 export const apiUrl = (path: string) => `${API_URL}${path}`;
 
-/** build = a dashboard of charts, chat = plain conversation, prepare = a written piece (report, story, announcement). */
-export type AdminAiMode = "build" | "chat" | "prepare";
+/** chat = plain conversation (default), build = dashboard of charts, prepare = written piece, video = storyboard, image = prompt design. */
+export type AdminAiMode = "chat" | "build" | "prepare" | "video" | "image";
 
 /** Admin: ask in plain words, get a reply and charts. history: earlier "User: ..." / "Assistant: ..." lines, oldest first. */
-export const adminAiDashboard = (prompt: string, history: string[] = [], mode: AdminAiMode = "build") =>
+export const adminAiDashboard = (prompt: string, history: string[] = [], mode: AdminAiMode = "chat") =>
   request<AiDashboard>("/ai/admin/dashboard", json("POST", { prompt, history, mode }));
+
+export interface AiMonitoringUser {
+  id: string;
+  fullname: string;
+  username: string;
+  email: string;
+  is_admin: boolean;
+  is_ai_enabled: boolean;
+  daily_token_limit: number;
+  monthly_token_limit: number;
+  tier: string;
+  notes: string | null;
+  tokens_today: number;
+  tokens_total: number;
+  requests_today: number;
+  requests_total: number;
+  last_used_at: string | null;
+  usage_percent_today: number;
+}
+
+export interface AiMonitoringLog {
+  id: string;
+  user_id: string | null;
+  user_name: string;
+  feature: string;
+  endpoint: string;
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  latency_ms: number | null;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface AiMonitoringData {
+  provider: string;
+  model: string;
+  model_specs: {
+    display_name: string;
+    rpm_limit: number;
+    tpm_limit: number;
+    rpd_limit: number;
+    context_window: number;
+    max_output_tokens: number;
+    tier: string;
+  };
+  has_api_key: boolean;
+  rate_limits: {
+    rpm_limit: number;
+    tpm_limit: number;
+    rpd_limit: number;
+    context_window: number;
+    max_output_tokens: number;
+    current_rpm: number;
+    current_tpm: number;
+    requests_today: number;
+    requests_remaining_today: number;
+    rate_limited_today: number;
+  };
+  usage_today: {
+    requests_count: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    avg_latency_ms: number;
+    rate_limit_hits: number;
+  };
+  usage_all_time: {
+    total_requests: number;
+    total_tokens: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+  };
+  breakdown_by_feature: Array<{
+    feature: string;
+    requests_count: number;
+    total_tokens: number;
+  }>;
+  time_series: Array<{
+    date: string;
+    requests_count: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  }>;
+  users: AiMonitoringUser[];
+  recent_logs: AiMonitoringLog[];
+}
+
+export interface GeminiProbeResult {
+  ok: boolean;
+  status: string;
+  model?: string;
+  display_name?: string;
+  input_token_limit?: number;
+  output_token_limit?: number;
+  latency_ms: number;
+  message?: string;
+  status_code?: number;
+}
+
+export const fetchAiMonitoring = (days: number = 30) =>
+  request<AiMonitoringData>(`/admin/ai/monitoring?days=${days}`);
+
+export const probeGeminiApi = (model?: string) =>
+  request<GeminiProbeResult>(model ? `/admin/ai/probe?model=${encodeURIComponent(model)}` : "/admin/ai/probe");
+
+export const updateUserAiQuota = (
+  userId: string,
+  data: {
+    is_ai_enabled: boolean;
+    daily_token_limit: number;
+    monthly_token_limit: number;
+    tier?: string;
+    notes?: string | null;
+  }
+) =>
+  request<{ ok: boolean; message: string; quota: any }>(
+    `/admin/ai/users/${userId}/quota`,
+    json("PUT", data)
+  );
+
+export interface AiProviderConfig {
+  provider: "gemini" | "deepseek" | "mistral" | "ollama" | "custom";
+  gemini?: {
+    api_key?: string;
+    model?: string;
+  };
+  deepseek?: {
+    api_key?: string;
+    model?: string;
+    base_url?: string;
+  };
+  mistral?: {
+    api_key?: string;
+    model?: string;
+    base_url?: string;
+  };
+  ollama?: {
+    base_url?: string;
+    model?: string;
+  };
+  custom?: {
+    base_url?: string;
+    api_key?: string;
+    model?: string;
+  };
+  temperature?: number;
+  max_tokens?: number;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export interface AiTestResult {
+  ok: boolean;
+  latency_ms: number;
+  duration_seconds?: number;
+  tokens_per_second?: number;
+  tokens_generated?: number;
+  reply?: string;
+  error?: string;
+  provider: string;
+  model?: string;
+  message: string;
+  system?: {
+    cpu_percent: number;
+    ram_used_gb: number;
+    ram_total_gb: number;
+    ram_percent: number;
+  };
+}
+
+export interface LocalAiModel {
+  name: string;
+  size_bytes: number;
+  size_formatted: string;
+  parameter_size: string;
+  quantization: string;
+  family: string;
+  format: string;
+  capabilities: string[];
+  is_running: boolean;
+  ram_used_gb: number;
+  vram_used_gb: number;
+  expires_at?: string;
+  modified_at?: string;
+}
+
+export interface LocalModelsResponse {
+  ok: boolean;
+  endpoint: string;
+  models: LocalAiModel[];
+  total_count: number;
+  running_count: number;
+  system: {
+    cpu_percent: number;
+    ram_used_gb: number;
+    ram_total_gb: number;
+    ram_percent: number;
+  };
+  error?: string;
+  message?: string;
+}
+
+export interface LocalModelBenchmarkResult {
+  ok: boolean;
+  model: string;
+  endpoint: string;
+  prompt: string;
+  reply?: string;
+  duration_seconds: number;
+  eval_duration_seconds?: number;
+  load_duration_seconds?: number;
+  tokens_generated?: number;
+  tokens_per_second?: number;
+  is_warm?: boolean;
+  model_memory_gb?: number;
+  system: {
+    cpu_percent: number;
+    ram_used_gb: number;
+    ram_total_gb: number;
+    ram_percent: number;
+  };
+  error?: string;
+  message?: string;
+}
+
+export const fetchAiConfig = () =>
+  request<AiProviderConfig>("/admin/ai/config");
+
+export const updateAiConfig = (config: AiProviderConfig) =>
+  request<{ ok: boolean; message: string; config: AiProviderConfig }>(
+    "/admin/ai/config",
+    json("PUT", { config })
+  );
+
+export const testAiConfig = (config: AiProviderConfig) =>
+  request<AiTestResult>(
+    "/admin/ai/config/test",
+    json("POST", { config })
+  );
+
+export const fetchLocalModels = (endpoint?: string) =>
+  request<LocalModelsResponse>(
+    `/admin/ai/local-models${endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : ""}`
+  );
+
+export const benchmarkLocalModel = (data: { model: string; prompt?: string; endpoint?: string }) =>
+  request<LocalModelBenchmarkResult>(
+    "/admin/ai/local-models/benchmark",
+    json("POST", data)
+  );
+
+export const selectLocalModel = (data: { model: string; endpoint?: string }) =>
+  request<{ ok: boolean; message: string; config: AiProviderConfig; model: string; endpoint: string }>(
+    "/admin/ai/local-models/select",
+    json("POST", data)
+  );
+
 
 /** Public website: one turn with the AI support assistant. No account needed; it sees no user data. */
 export const askSupportAi = (message: string, history: string[] = [], name?: string | null) =>

@@ -15,6 +15,7 @@ from app.ai.mcp_client import general_tools
 from app.ai.security_guard import sanitize_user_prompt
 from app.ai.story import NoMemories, generate_story
 from app.ai.tools import user_tools
+from app.ai.usage_monitor import check_user_quota, record_ai_usage
 from app.core.config import settings
 from app.models.memory import StoryChapter
 
@@ -187,14 +188,12 @@ async def answer(engine: ConnectedEngine, db: AsyncSession, user_id, who: str, m
     history: earlier turns as "User: ..." / "AI: ..." lines, oldest first.
     dev=True (developer dashboard only) also gives the model the sandbox file tools and the extra MCP servers.
     """
+    from app.ai.engine import load_ai_config_from_db
+    await load_ai_config_from_db(db)
     history = earlier_turns(history, message)
+
     c = await load_companion(db, user_id)
     asked = bool(history) and _ASK in history[-1]
-    if not asked and is_pure_greeting(message):
-        user_name = await get_user_display_name(db, user_id, who)
-        if SWAHILI_GREETING_Q.search(message):
-            return AgentResult(f"Habari {user_name}! Ninawezaje kukusaidia leo? (Hello {user_name}! How can I assist you today?)")
-        return AgentResult(f"Hello {user_name}! How can I assist you today?")
     need = _needed_gate(message)
     if asked and need is None and not {GATE, MEMORY_GATE} <= set(c.access_permissions):
         # the reply to a consent question is "yes"/"no", which has no keywords of its own
@@ -239,7 +238,9 @@ async def answer(engine: ConnectedEngine, db: AsyncSession, user_id, who: str, m
         if MEMORY_GATE in permissions:
             tools.append(_story_tool(engine, db, user_id, companion))
         if not is_ollama or dev or re.search(r"\b(calc|calculate|math|sum|date|time|today|chart|sketch|graph|plot)\b", message, re.I):
-            tools += await general_tools(dev=dev)
+            gen_tools = await general_tools(dev=dev)
+            existing_names = {t.name for t in tools}
+            tools += [t for t in gen_tools if t.name not in existing_names]
 
     message = sanitize_user_prompt(message)
     k_val = 2 if is_ollama else 4
@@ -262,20 +263,55 @@ async def answer(engine: ConnectedEngine, db: AsyncSession, user_id, who: str, m
     if is_ollama and not needs_tools and not deep and len(message) <= 160:
         # Small talk on a local model: the full prompt is ~1,500 tokens and takes over a minute to read on a CPU. A short one answers in seconds.
         system = (f"You are {c.name or 'Kimmy'}, a warm, friendly AI companion inside HOME PROOFOLIO, a portfolio platform. "
-                  f"You are speaking with {user_name}. When greeted (e.g. 'hi', 'hello', 'hey', 'good morning', 'habari'), always address the user by name: 'Hello {user_name}! How can I assist you today?' (or 'Habari {user_name}! Ninawezaje kukusaidia leo?'). "
-                  f"{who} Reply briefly and naturally in the user's language (English or Kiswahili). "
+                  f"You are speaking with {user_name}. "
+                  f"{who} Reply warmly, conversationally, and naturally in the user's language (English or Kiswahili). "
+                  "Never repeat rigid or robotic canned phrases. "
                   "If they ask about their own work, projects or memories, tell them to ask and you will look it up.")
+    # Check if the user is authorized and within token allowance
+    allowed, quota_err, _ = await check_user_quota(db, user_id)
+    if not allowed:
+        await record_ai_usage(
+            db,
+            user_id=user_id,
+            feature="companion_chat",
+            endpoint="/ai/chat",
+            status="quota_exceeded",
+            error_message=quota_err,
+        )
+        return AgentResult(quota_err or "AI access paused.")
+
     try:
-        return await run_agent(engine.think_llm if deep else engine.llm, system, history_messages(history), message, tools,
-                               on_state=on_state, think_state="reasoning" if deep else "thinking")
+        agent_res = await run_agent(engine.think_llm if deep else engine.llm, system, history_messages(history), message, tools,
+                                   on_state=on_state, think_state="reasoning" if deep else "thinking")
+        await record_ai_usage(
+            db,
+            user_id=user_id,
+            feature="companion_chat",
+            endpoint="/ai/chat",
+            prompt_tokens=agent_res.prompt_tokens,
+            completion_tokens=agent_res.completion_tokens,
+            total_tokens=agent_res.total_tokens,
+            latency_ms=int(agent_res.seconds * 1000),
+            status="success",
+        )
+        return agent_res
     except Exception as exc:
+        status_flag = "rate_limited" if "429" in str(exc) or "quota" in str(exc).lower() else "error"
+        await record_ai_usage(
+            db,
+            user_id=user_id,
+            feature="companion_chat",
+            endpoint="/ai/chat",
+            status=status_flag,
+            error_message=str(exc)[:400],
+        )
         log.warning("LLM agent call failed (%s); providing grounded workspace context", explain_error(exc))
         name = c.name or "Kimmy"
         low = message.lower()
         if GREETING_Q.search(message):
             if SWAHILI_GREETING_Q.search(message):
-                return AgentResult(f"Habari {user_name}! Ninawezaje kukusaidia leo? (Hello {user_name}! How can I assist you today?)")
-            return AgentResult(f"Hello {user_name}! How can I assist you today?")
+                return AgentResult(f"Habari {user_name}! Ninawezaje kukusaidia leo?")
+            return AgentResult(f"Hello {user_name}! Great to see you. How are things going today?")
         if MESSAGE_Q.search(message) and GATE in permissions:
             try:
                 from app.ai.db_context import user_messages_context

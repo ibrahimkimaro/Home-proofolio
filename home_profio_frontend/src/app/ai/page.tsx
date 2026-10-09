@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, Check, Copy, Download, History, SquarePen, Sliders, Trash2, X } from "lucide-react";
+import { ArrowUp, Calendar, Check, Copy, Download, History, Search, Sparkles, SquarePen, Sliders, Trash2, X } from "lucide-react";
 import { AppShell, useSession, displayName } from "@/components/app/AppShell";
 import {
   streamAiChat,
@@ -36,6 +36,9 @@ export default function AiPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [histQuery, setHistQuery] = useState("");
+  const [histRange, setHistRange] = useState<"all" | "today" | "7" | "30">("all");
+  const [histDay, setHistDay] = useState(""); // a single day, YYYY-MM-DD; wins over the range
   const [hasMore, setHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [openingChat, setOpeningChat] = useState(false);
@@ -90,14 +93,14 @@ export default function AiPage() {
     try { id = localStorage.getItem(STORE); } catch { }
     if (id) {
       void openSession(id);
-      fetchSessions().then(setSessions).catch(() => {});
+      fetchSessions().then(setSessions).catch(() => { });
     } else {
       fetchSessions().then((list) => {
         setSessions(list);
         if (list.length > 0) {
           void openSession(list[0].id);
         }
-      }).catch(() => {});
+      }).catch(() => { });
     }
   }, [user, openSession]);
 
@@ -125,6 +128,7 @@ export default function AiPage() {
   const toggleHistory = async () => {
     const opening = !historyOpen;
     setHistoryOpen(opening);
+    if (opening) { setHistQuery(""); setHistRange("all"); setHistDay(""); }
     if (opening) setSessions(await fetchSessions().catch(() => []));
   };
 
@@ -276,37 +280,9 @@ export default function AiPage() {
 
   return (
     <AppShell user={user}>
-      <div className="mx-auto flex h-[calc(100dvh-4.25rem-4.5rem-env(safe-area-inset-bottom,0px))] sm:h-[calc(100vh-5.5rem)] w-full max-w-7xl flex-col">
-        {/* Header: who you are talking to, and a few quiet actions */}
-        <header className="flex shrink-0 items-center justify-between gap-2 border-b border-hairline/70 px-3 py-2 sm:px-5">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <div className="min-w-0">
-              <h1 className="truncate text-[15px] font-semibold text-ink-800">{companionName}</h1>
-              <p className="truncate text-[11px] text-slate">{isLoading ? STATES[aiState]?.[1] ?? "Thinking…" : "Your AI companion"}</p>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-0.5">
-            <a href={getWorkReportDownloadUrl()} target="_blank" rel="noreferrer" className={iconButton} title="Download a PDF report of your work">
-              <Download className="h-4 w-4" />
-              <span className="hidden md:inline">Report</span>
-            </a>
-            <button type="button" onClick={() => setSettingsOpen(true)} className={iconButton} title="Companion settings">
-              <Sliders className="h-4 w-4" />
-              <span className="hidden md:inline">Settings</span>
-            </button>
-            <button type="button" onClick={toggleHistory} className={iconButton} title="Previous chats">
-              <History className="h-4 w-4" />
-              <span className="hidden md:inline">History</span>
-            </button>
-            <button type="button" onClick={clearChat} disabled={(messages.length === 0 && !sessionId) || isLoading} className={iconButton} title="New chat">
-              <SquarePen className="h-4 w-4" />
-              <span className="hidden md:inline">New chat</span>
-            </button>
-          </div>
-        </header>
-
+      <div className="relative mx-auto flex h-[calc(100dvh-4.25rem-4.5rem-env(safe-area-inset-bottom,0px))] sm:h-[calc(100vh-5.5rem)] max-w-7xl flex-col pt-2">
         {/* Conversation */}
-        <div ref={scrollRef} onScroll={onScroll} style={{ overflowAnchor: "none" }} className="flex-1 overflow-y-auto">
+        <div ref={scrollRef} onScroll={onScroll} style={{ overflowAnchor: "none" }} className="flex-1 overflow-y-auto pb-36 sm:pb-40">
           {openingChat ? (
             <p className="py-10 text-center text-[13px] text-slate">Opening chat…</p>
           ) : messages.length === 0 && !isLoading ? (
@@ -315,12 +291,12 @@ export default function AiPage() {
               <h2 className="mt-6 text-[22px] font-semibold text-ink-800 sm:text-[26px]">
                 Hi {firstName}, how can I help?
               </h2>
-              <p className="mt-2 text-[13px] leading-relaxed text-slate">
-                Ask {companionName} about your work, learning and memories, or to help you write about them. Kiswahili works too.
+              <p className="mt-2 text-[13px] leading-relaxed text-slate max-w-md">
+                Ask {companionName} about your work, learning and memories, or to create charts and write summaries. Kiswahili works too.
               </p>
             </div>
           ) : (
-            <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6">
+            <div className="w-full space-y-6 px-3 py-6 sm:px-6">
               {hasMore && (
                 <div className="flex justify-center">
                   <button type="button" onClick={() => void loadOlder()} disabled={loadingOlder} className="cursor-pointer rounded-full px-3 py-1 text-[12px] text-slate transition hover:bg-paper-dim hover:text-ink-800 disabled:cursor-default">
@@ -328,128 +304,222 @@ export default function AiPage() {
                   </button>
                 </div>
               )}
-              {messages.map((m) =>
-                m.role === "user" ? (
-                  <div key={m.id} className="flex justify-end">
+              {messages.map((m) => {
+                const hasChart =
+                  m.role === "assistant" &&
+                  (m.content.includes("```chart") ||
+                    m.content.includes("```nivo") ||
+                    m.content.includes("```json:chart") ||
+                    m.content.includes("```graph") ||
+                    m.content.includes("```recharts") ||
+                    m.content.includes('"type": "bar') ||
+                    m.content.includes('"type": "pie'));
+
+                return m.role === "user" ? (
+                  <div key={m.id} className="mx-auto flex w-full max-w-4xl justify-end">
                     <p
                       title={m.timestamp}
-                      className="max-w-[85%] whitespace-pre-wrap break-words rounded-3xl border border-hairline bg-paper px-4 py-2.5 shadow-2xs text-[14px] leading-relaxed text-ink-800 sm:max-w-[75%]"
+                      className="max-w-[85%] whitespace-pre-wrap break-words rounded-3xl bg-paper-dim px-4.5 py-3 text-sm font-medium text-ink-800 shadow-2xs sm:max-w-[75%]"
                     >
                       {m.content}
                     </p>
                   </div>
                 ) : (
-                  <div key={m.id} className="group flex gap-3">
-                    <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-sky-500/20 via-indigo-500/15 to-teal-500/20">
-                      <span className="h-2.5 w-2.5 rounded-full bg-sky-500/80" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[14px] leading-relaxed text-ink-800">
-                        <AiMarkdown content={m.content} />
-                      </div>
-                      {/* Quiet actions, ChatGPT style: always on touch screens, on hover with a mouse */}
-                      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-slate transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100">
-                        <button
-                          type="button"
-                          onClick={() => copyMessage(m)}
-                          aria-label="Copy answer"
-                          className="flex items-center gap-1 rounded-md p-1 hover:bg-paper-dim hover:text-ink-800 cursor-pointer"
-                        >
-                          {copiedId === m.id ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-                          {copiedId === m.id && <span>Copied</span>}
-                        </button>
-                        <span>{m.timestamp}</span>
+                  <div
+                    key={m.id}
+                    className={hasChart ? "w-full max-w-full px-1 sm:px-4" : "mx-auto w-full max-w-4xl"}
+                  >
+                    <div className="group flex gap-3.5">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brass/15 text-brass-dark">
+                        <Sparkles className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="rounded-3xl border border-hairline/80 bg-paper p-5 text-sm text-ink-800 shadow-2xs">
+                          <AiMarkdown content={m.content} />
+                        </div>
+                        {/* Quiet actions, ChatGPT style: always on touch screens, on hover with a mouse */}
+                        <div className="mt-1.5 flex items-center gap-2 text-[11px] text-slate transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100">
+                          <button
+                            type="button"
+                            onClick={() => copyMessage(m)}
+                            aria-label="Copy answer"
+                            className="flex items-center gap-1 rounded-md p-1 hover:bg-paper-dim hover:text-ink-800 cursor-pointer"
+                          >
+                            {copiedId === m.id ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                            {copiedId === m.id && <span>Copied</span>}
+                          </button>
+                          <span>{m.timestamp}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                ),
+                );
+              })}
+
+              {isLoading && (
+                <div className="mx-auto w-full max-w-4xl">
+                  <Thinking state={aiState} />
+                </div>
               )}
-
-              {isLoading && <Thinking state={aiState} />}
-
             </div>
           )}
         </div>
 
-        {/* Composer */}
-        <div className="shrink-0 px-3 pb-3 pt-1 sm:px-5">
-          {error && (
-            <div role="alert" className="mx-auto mb-2 flex max-w-3xl items-start gap-2 rounded-xl border border-berry/30 bg-berry/10 px-3 py-2 text-[12px] text-berry">
-              <span className="flex-1">{error}</span>
-              <button type="button" onClick={() => setError(null)} aria-label="Dismiss" className="cursor-pointer">
-                <X className="h-3.5 w-3.5" />
+        {/* FLOATING BOTTOM DOCK */}
+        <div className="fixed bottom-3 left-0 right-0 z-40 flex justify-center px-3 pointer-events-none md:left-64 sm:bottom-5 sm:px-4">
+          <div className="pointer-events-auto flex w-full max-w-3xl flex-col items-center gap-2">
+            {error && (
+              <div role="alert" className="flex w-full items-start gap-2 rounded-2xl border border-berry/30 bg-berry/10 p-2.5 text-[12px] text-berry shadow-lg backdrop-blur-xl">
+                <span className="flex-1">{error}</span>
+                <button type="button" onClick={() => setError(null)} aria-label="Dismiss" className="cursor-pointer">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
+            {messages.length === 0 && !isLoading && (
+              <div className="flex flex-wrap items-center justify-center gap-1.5 pb-0.5">
+                {[
+                  { label: "📊 Summary & Nivo Charts", prompt: "Give me an overview of my work and achievements with a rich visual chart." },
+                  { label: "✨ Draft Bio", prompt: "Help me write a concise, compelling bio for my portfolio based on my work." },
+                  { label: "🧠 Memory Insights", prompt: "What highlights and key milestones are captured in my timeline?" },
+                  { label: "🇹🇿 Ongea Kiswahili", prompt: "Habari! Unaweza kunisaidiaje kuhusu kazi na miradi yangu?" },
+                ].map((pill) => (
+                  <button
+                    key={pill.label}
+                    type="button"
+                    onClick={() => {
+                      setInput(pill.prompt);
+                      boxRef.current?.focus();
+                    }}
+                    className="cursor-pointer rounded-full border border-hairline/80 bg-paper/90 px-3 py-1 text-[11px] font-medium text-slate shadow-xs backdrop-blur-md transition hover:border-sky-500/40 hover:bg-sky-500/10 hover:text-ink-800"
+                  >
+                    {pill.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Floating action bar, same as the admin assistant */}
+            <div className="flex items-center gap-1 rounded-2xl border border-hairline/80 bg-paper/90 p-1.5 shadow-lg backdrop-blur-xl">
+              <a href={getWorkReportDownloadUrl()} target="_blank" rel="noreferrer" className={iconButton} title="Download a PDF report of your work">
+                <Download className="h-4 w-4" />
+                <span className="hidden sm:inline">Report</span>
+              </a>
+              <button type="button" onClick={() => setSettingsOpen(true)} className={iconButton} title="Companion settings">
+                <Sliders className="h-4 w-4" />
+                <span className="hidden sm:inline">Settings</span>
+              </button>
+              <button type="button" onClick={toggleHistory} className={iconButton} title="Previous chats">
+                <History className="h-4 w-4" />
+                <span className="hidden sm:inline">History</span>
+              </button>
+              <div className="mx-1 h-4 w-px bg-hairline/80" />
+              <button type="button" onClick={clearChat} disabled={(messages.length === 0 && !sessionId) || isLoading} className={iconButton} title="New chat">
+                <SquarePen className="h-4 w-4" />
+                <span className="hidden sm:inline">New chat</span>
               </button>
             </div>
-          )}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSend();
-            }}
-            className="mx-auto flex max-w-3xl items-end gap-2 rounded-3xl border border-hairline bg-paper px-4 py-2 shadow-xs transition focus-within:border-sky-500/50"
-          >
-            <label htmlFor="ai-message" className="sr-only">
-              Message {companionName}
-            </label>
-            <textarea
-              id="ai-message"
-              ref={boxRef}
-              rows={1}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={`Message ${companionName}…`}
-              className="max-h-[200px] flex-1 resize-none bg-transparent py-1.5 text-[15px] text-ink-800 outline-none placeholder:text-slate sm:text-[14px]"
-            />
-            <button
-              type="submit"
-              disabled={!input.trim() || isLoading}
-              aria-label="Send"
-              className="mb-0.5 flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-ink text-paper transition hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-30"
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSend();
+              }}
+              className="flex w-full items-end gap-2 rounded-3xl border border-hairline/80 bg-paper/95 p-2 shadow-2xl backdrop-blur-2xl transition focus-within:border-brass/70 focus-within:ring-2 focus-within:ring-brass/15 sm:p-2.5"
             >
-              <ArrowUp className="h-4 w-4" />
-            </button>
-          </form>
-          <p className="mt-1.5 hidden text-center text-[11px] text-slate sm:block">
-            {companionName} reads your own data only, never changes it, and can make mistakes.
-          </p>
+              <label htmlFor="ai-message" className="sr-only">
+                Message {companionName}
+              </label>
+              <textarea
+                id="ai-message"
+                ref={boxRef}
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={`Message ${companionName}…`}
+                className="max-h-[160px] flex-1 resize-none bg-transparent px-3 py-1.5 text-[15px] text-ink-800 outline-none placeholder:text-slate sm:text-[14px]"
+              />
+              <button
+                type="submit"
+                disabled={!input.trim() || isLoading}
+                aria-label="Send"
+                className="mb-0.5 flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-ink text-paper shadow-sm transition hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                <ArrowUp className="h-4 w-4" />
+              </button>
+            </form>
+            <p className="hidden text-center text-[10px] text-slate/80 sm:block">
+              {companionName} reads your verified data only. Enter sends, Shift+Enter for new line.
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* Previous chats */}
-      {historyOpen && (
-        <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={() => setHistoryOpen(false)}>
-          <aside onClick={(e) => e.stopPropagation()} className="flex h-full w-full max-w-sm flex-col border-l border-hairline bg-paper shadow-xl">
-            <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
-              <h3 className="text-[14px] font-semibold text-ink-800">Previous chats</h3>
-              <button type="button" onClick={() => setHistoryOpen(false)} aria-label="Close" className="cursor-pointer rounded-lg p-1 text-slate hover:bg-paper-dim hover:text-ink-800">
-                <X className="h-4 w-4" />
-              </button>
+      {/* Previous chats: a centred dialog with search and date filters */}
+      {historyOpen && (() => {
+        const q = histQuery.trim().toLowerCase();
+        const now = Date.now();
+        const days = histRange === "today" ? 1 : histRange === "7" ? 7 : histRange === "30" ? 30 : 0;
+        const shown = sessions.filter((s) => {
+          if (q && !s.title.toLowerCase().includes(q)) return false;
+          const t = new Date(s.updated_at);
+          if (histDay) return t.toLocaleDateString("en-CA") === histDay;
+          if (days === 1) return t.toDateString() === new Date().toDateString();
+          return !days || now - t.getTime() <= days * 864e5;
+        });
+        const chip = (on: boolean) => `cursor-pointer rounded-full border px-3 py-1 text-[12px] font-medium transition ${on ? "border-ink bg-ink text-paper" : "border-hairline text-slate hover:bg-paper-dim hover:text-ink-800"}`;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs" onClick={() => setHistoryOpen(false)}>
+            <div role="dialog" aria-modal="true" aria-label="Chat history" onClick={(e) => e.stopPropagation()} className="flex max-h-[80dvh] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-hairline bg-paper shadow-2xl">
+              <div className="flex items-center justify-between px-5 pb-3 pt-4">
+                <h3 className="flex items-center gap-2 text-[15px] font-semibold text-ink-800"><History className="h-4 w-4 text-slate" />Chat history</h3>
+                <button type="button" onClick={() => setHistoryOpen(false)} aria-label="Close" className="cursor-pointer rounded-lg p-1.5 text-slate hover:bg-paper-dim hover:text-ink-800">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="space-y-3 border-b border-hairline px-5 pb-4">
+                <label className="flex items-center gap-2 rounded-2xl border border-hairline bg-paper-dim px-3 py-2 focus-within:border-brass/70">
+                  <Search className="h-4 w-4 shrink-0 text-slate" />
+                  <input autoFocus value={histQuery} onChange={(e) => setHistQuery(e.target.value)} placeholder="Search your chats…" className="min-w-0 flex-1 bg-transparent text-[14px] text-ink-800 outline-none placeholder:text-slate" />
+                </label>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {([["all", "All time"], ["today", "Today"], ["7", "Last 7 days"], ["30", "Last 30 days"]] as const).map(([k, label]) => (
+                    <button key={k} type="button" onClick={() => { setHistRange(k); setHistDay(""); }} className={chip(!histDay && histRange === k)}>{label}</button>
+                  ))}
+                  <label className={`flex items-center gap-1.5 ${chip(!!histDay)}`}>
+                    <Calendar className="h-3.5 w-3.5" />
+                    <input type="date" value={histDay} onChange={(e) => setHistDay(e.target.value)} aria-label="Pick a day" className="cursor-pointer bg-transparent text-[12px] outline-none [color-scheme:light_dark]" />
+                  </label>
+                </div>
+              </div>
+              <div className="min-h-[12rem] flex-1 overflow-y-auto p-2">
+                {shown.length === 0 ? (
+                  <p className="px-3 py-10 text-center text-[13px] text-slate">{sessions.length === 0 ? "No saved chats yet. Your conversations will appear here." : "No chats match your search."}</p>
+                ) : (
+                  shown.map((s) => (
+                    <div key={s.id} className={`group flex items-center gap-1 rounded-2xl px-3 py-2.5 transition hover:bg-paper-dim ${s.id === sessionId ? "bg-paper-dim" : ""}`}>
+                      <button
+                        type="button"
+                        onClick={() => { setHistoryOpen(false); if (s.id !== sessionId) void openSession(s.id); }}
+                        className="min-w-0 flex-1 cursor-pointer text-left"
+                      >
+                        <p className="truncate text-[13px] font-medium text-ink-800">{s.title}</p>
+                        <p className="text-[11px] text-slate">{new Date(s.updated_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</p>
+                      </button>
+                      <button type="button" onClick={() => void removeSession(s.id)} aria-label="Delete chat" className="cursor-pointer rounded-md p-1.5 text-slate opacity-60 transition hover:bg-berry/10 hover:text-berry [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              <p className="border-t border-hairline px-5 py-2 text-[11px] text-slate">{shown.length} of {sessions.length} chats</p>
             </div>
-            <div className="flex-1 overflow-y-auto p-2">
-              {sessions.length === 0 ? (
-                <p className="px-3 py-8 text-center text-[13px] text-slate">No saved chats yet. Your conversations will appear here.</p>
-              ) : (
-                sessions.map((s) => (
-                  <div key={s.id} className={`group flex items-center gap-1 rounded-xl px-3 py-2 transition hover:bg-paper-dim ${s.id === sessionId ? "bg-paper-dim" : ""}`}>
-                    <button
-                      type="button"
-                      onClick={() => { setHistoryOpen(false); if (s.id !== sessionId) void openSession(s.id); }}
-                      className="min-w-0 flex-1 cursor-pointer text-left"
-                    >
-                      <p className="truncate text-[13px] font-medium text-ink-800">{s.title}</p>
-                      <p className="text-[11px] text-slate">{new Date(s.updated_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</p>
-                    </button>
-                    <button type="button" onClick={() => void removeSession(s.id)} aria-label="Delete chat" className="cursor-pointer rounded-md p-1.5 text-slate opacity-60 transition hover:bg-berry/10 hover:text-berry [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </aside>
-        </div>
-      )}
+          </div>
+        );
+      })()}
 
       {/* Companion Settings Modal */}
       {settingsOpen && (

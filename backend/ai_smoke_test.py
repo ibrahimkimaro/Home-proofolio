@@ -36,7 +36,10 @@ async def check() -> ConnectedEngine | None:
     provider = settings.ai_provider.lower()
     token = settings.huggingface_api_token
     print(f"Provider: {provider}   Model: {model_name()}   Thinking: {settings.ai_reasoning_effort or 'default'}")
-    if provider != "ollama":
+    if provider in ("gemini", "google"):
+        key = settings.gemini_api_key
+        print(f"Endpoint: {settings.gemini_base_url}   Key: {'...' + key[-6:] if key else 'MISSING'}")
+    elif provider != "ollama":
         print(f"Router:   {settings.huggingface_base_url}   Token: {'hf_...' + token[-4:] if token else 'MISSING'}")
     print()
 

@@ -13,6 +13,7 @@ from app.api.admin import router as admin_router
 from app.api.admin_messages import router as admin_messages_router
 from app.api.admin_security import router as admin_security_router
 from app.api.admin_system import router as admin_system_router
+from app.api.admin_ai_monitoring import router as admin_ai_monitoring_router
 from app.api.chat_clear import router as chat_clear_router
 from app.api.chat_pins import router as chat_pins_router
 from app.api.engage import router as engage_router
@@ -87,6 +88,7 @@ app.include_router(chat_pins_router)
 app.include_router(engage_router)
 app.include_router(push_router)
 app.include_router(admin_system_router)
+app.include_router(admin_ai_monitoring_router)
 app.include_router(admin_manage_router)
 app.include_router(onboarding_router)
 app.include_router(profiles_router)

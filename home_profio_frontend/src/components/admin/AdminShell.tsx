@@ -28,6 +28,7 @@ import {
   MessagesSquare,
   LifeBuoy,
   Sparkles,
+  Cpu,
   type LucideIcon,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -38,6 +39,7 @@ export type AdminSection =
   | "overview"
   | "analytics"
   | "ai"
+  | "ai_monitoring"
   | "users"
   | "works"
   | "businesses"
@@ -59,7 +61,9 @@ export const NAV: NavItem[] = [
   { id: "overview", group: "Insights", label: "Overview", icon: LayoutDashboard, description: "System health and activity at a glance" },
   { id: "analytics", group: "Insights", label: "Analytics", icon: BarChart3, description: "Growth, engagement and the onboarding funnel" },
   { id: "ai", group: "Insights", label: "AI dashboards", icon: Sparkles, description: "Ask in plain words, get charts from live data" },
+  { id: "ai_monitoring", group: "Insights", label: "AI monitoring", icon: Cpu, description: "Model rate limits, token quotas, and per-user usage management" },
   { id: "health", group: "Insights", label: "System health", icon: Activity, description: "Is the app up, how fast and how busy" },
+
   { id: "users", group: "People & content", label: "Users", icon: Users, description: "Manage accounts, roles and access" },
   { id: "works", group: "People & content", label: "Works & Proofs", icon: Briefcase, description: "Moderate every work item on the platform" },
   { id: "support", group: "People & content", label: "Support", icon: LifeBuoy, description: "Live chat with members who need a person" },
@@ -105,6 +109,14 @@ export function AdminShell({
       return false;
     }
   });
+
+  // `overflow-x: hidden` on body makes it a scroll container and breaks the sticky sidebar/header; clip avoids that. Admin only.
+  useEffect(() => {
+    document.body.style.overflowX = "clip";
+    return () => {
+      document.body.style.overflowX = "";
+    };
+  }, []);
 
   useEffect(() => {
     if (!mobileOpen) return;

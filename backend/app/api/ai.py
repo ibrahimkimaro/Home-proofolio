@@ -259,18 +259,19 @@ async def support(body: SupportIn, request: Request):
 class DashboardIn(BaseModel):
     prompt: str = Field(min_length=1, max_length=1000)
     history: list[str] = Field(default_factory=list, max_length=8)  # earlier requests and summaries, oldest first
-    mode: Literal["build", "chat", "prepare"] = "build"  # dashboard, plain conversation, or a written piece
+    mode: Literal["chat", "build", "prepare", "video", "image"] = "chat"  # chat (default), build, prepare, video, image
 
 
 @router.post("/admin/dashboard")
 async def admin_dashboard(body: DashboardIn, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Admin asks in plain words; the reply is a short summary plus charts filled from the database (read-only)."""
     try:
-        return await build_dashboard(get_engine(), db, admin.fullname, body.prompt, body.history, body.mode)
+        return await build_dashboard(get_engine(), db, admin.fullname, body.prompt, body.history, body.mode, admin_id=admin.id)
     except Exception as e:
         reason = explain_error(e)  # safe to show: this endpoint is admin only and the reason never holds the token
         log.exception("AI dashboard failed: %s", reason)
         raise HTTPException(503, f"The AI is unavailable. {reason}")
+
 
 
 def _pdf_response(name: str) -> FileResponse:

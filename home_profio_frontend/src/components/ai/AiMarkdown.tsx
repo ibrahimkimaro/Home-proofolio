@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
 
-import { AiChart, tryParseChart } from "./AiChart";
+import { ChartGrid, tryParseCharts, type ChartSpec } from "./AiChart";
 import {
   AiWorkspace,
   OpenWorkspaceButton,
@@ -13,64 +13,161 @@ import {
   type WorkspaceSpec,
 } from "./AiWorkspace";
 
+interface MarkdownPart {
+  kind: "text" | "code" | "workspace" | "terminal" | "charts";
+  text?: string;
+  code?: string;
+  language?: string;
+  room?: WorkspaceSpec;
+  charts?: ChartSpec[];
+}
+
 export function AiMarkdown({ content }: { content: string }) {
   const [workspace, setWorkspace] = useState<WorkspaceSpec | null>(null);
-  const parts = content.split(/(```[\s\S]*?```)/g);
+
+  // 1. Split content by code fence blocks
+  const rawParts = content.split(/(```[\s\S]*?```)/g);
+
+  // 2. Parse raw parts into typed tokens
+  const tokens: MarkdownPart[] = [];
+  for (const part of rawParts) {
+    if (!part) continue;
+    if (part.startsWith("```") && part.endsWith("```")) {
+      const lines = part.slice(3, -3).trim().split("\n");
+      const language = lines[0].match(/^[a-z0-9_:-]+$/i) ? lines[0] : "";
+      const code = (language ? lines.slice(1) : lines).join("\n");
+
+      const room = tryParseWorkspace(code, language);
+      if (room) {
+        tokens.push({ kind: "workspace", room });
+        continue;
+      }
+
+      const charts = tryParseCharts(code, language);
+      if (charts && charts.length > 0) {
+        tokens.push({ kind: "charts", charts });
+        continue;
+      }
+
+      if (TERMINAL_LANGS.includes(language.toLowerCase())) {
+        tokens.push({ kind: "terminal", code, language });
+        continue;
+      }
+
+      tokens.push({ kind: "code", code, language });
+    } else {
+      tokens.push({ kind: "text", text: part });
+    }
+  }
+
+  // 3. Coalesce adjacent or back-to-back chart blocks into unified multi-card dashboards
+  const merged: MarkdownPart[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const cur = tokens[i];
+    if (cur.kind === "charts" && cur.charts) {
+      const chartAccumulator = [...cur.charts];
+
+      // Merge subsequent chart blocks separated only by whitespace or line breaks
+      while (i + 1 < tokens.length) {
+        const next = tokens[i + 1];
+        if (next.kind === "charts" && next.charts) {
+          chartAccumulator.push(...next.charts);
+          i++;
+        } else if (
+          next.kind === "text" &&
+          !next.text?.trim() &&
+          i + 2 < tokens.length &&
+          tokens[i + 2].kind === "charts" &&
+          tokens[i + 2].charts
+        ) {
+          // Whitespace separator between two chart blocks
+          i++; // skip whitespace
+          chartAccumulator.push(...tokens[i + 1].charts!);
+          i++; // advance past subsequent chart
+        } else {
+          break;
+        }
+      }
+
+      merged.push({ kind: "charts", charts: chartAccumulator });
+    } else {
+      merged.push(cur);
+    }
+  }
 
   return (
     <div className="space-y-3 text-sm leading-relaxed text-inherit break-words">
-      {parts.map((part, idx) => {
-        if (part.startsWith("```") && part.endsWith("```")) {
-          const lines = part.slice(3, -3).trim().split("\n");
-          const language = lines[0].match(/^[a-z0-9_:-]+$/i) ? lines[0] : "";
-          const code = (language ? lines.slice(1) : lines).join("\n");
-          
-          const room = tryParseWorkspace(code, language);
-          if (room) {
-            return (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => setWorkspace(room)}
-                className="my-2.5 flex w-full cursor-pointer items-center justify-between gap-3 rounded-2xl border border-sky-500/30 bg-sky-500/5 px-4 py-3 text-left transition hover:bg-sky-500/10"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-[13px] font-semibold">{room.title}</span>
-                  <span className="block text-[11px] opacity-70">Workspace · {room.items.length} {room.items.length === 1 ? "panel" : "panels"}</span>
+      {merged.map((item, idx) => {
+        if (item.kind === "workspace" && item.room) {
+          return (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => setWorkspace(item.room!)}
+              className="my-2.5 flex w-full cursor-pointer items-center justify-between gap-3 rounded-2xl border border-sky-500/30 bg-sky-500/5 px-4 py-3 text-left transition hover:bg-sky-500/10"
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-[13px] font-semibold">{item.room.title}</span>
+                <span className="block text-[11px] opacity-70">
+                  Workspace · {item.room.items.length} {item.room.items.length === 1 ? "panel" : "panels"}
                 </span>
-                <span className="shrink-0 rounded-lg bg-sky-500 px-2.5 py-1 text-[12px] font-medium text-white">Open</span>
-              </button>
-            );
-          }
-
-          const chartSpec = tryParseChart(code, language);
-          if (chartSpec) {
-            return (
-              <div key={idx} className="my-2.5">
-                <AiChart spec={chartSpec} />
-                <div className="flex justify-end">
-                  <OpenWorkspaceButton onClick={() => setWorkspace({ title: chartSpec.title || "Chart", items: [{ kind: "chart", spec: chartSpec }] })} />
-                </div>
-              </div>
-            );
-          }
-
-          if (TERMINAL_LANGS.includes(language.toLowerCase())) {
-            return (
-              <div key={idx} className="my-2.5">
-                <TerminalPane text={code} title={language} />
-                <div className="flex justify-end">
-                  <OpenWorkspaceButton onClick={() => setWorkspace({ title: "Terminal", items: [{ kind: "terminal", title: language, text: code }] })} />
-                </div>
-              </div>
-            );
-          }
-
-          return <CodeBlock key={idx} code={code} language={language} />;
+              </span>
+              <span className="shrink-0 rounded-lg bg-sky-500 px-2.5 py-1 text-[12px] font-medium text-white">Open</span>
+            </button>
+          );
         }
 
-        // Regular text block with simple markdown parsing
-        return <TextBlock key={idx} text={part} />;
+        if (item.kind === "charts" && item.charts && item.charts.length > 0) {
+          const chartCount = item.charts.length;
+          const dashboardTitle =
+            chartCount > 1
+              ? `Dashboard (${chartCount} Charts)`
+              : item.charts[0].title || "Chart";
+
+          return (
+            <div key={idx} className="my-3 w-full max-w-full">
+              <ChartGrid charts={item.charts} />
+              <div className="flex justify-end mt-1.5">
+                <OpenWorkspaceButton
+                  onClick={() =>
+                    setWorkspace({
+                      title: dashboardTitle,
+                      items: item.charts!.map((c) => ({ kind: "chart", spec: c })),
+                    })
+                  }
+                />
+              </div>
+            </div>
+          );
+        }
+
+        if (item.kind === "terminal" && item.code) {
+          return (
+            <div key={idx} className="my-2.5">
+              <TerminalPane text={item.code} title={item.language || "terminal"} />
+              <div className="flex justify-end">
+                <OpenWorkspaceButton
+                  onClick={() =>
+                    setWorkspace({
+                      title: "Terminal",
+                      items: [{ kind: "terminal", title: item.language || "terminal", text: item.code! }],
+                    })
+                  }
+                />
+              </div>
+            </div>
+          );
+        }
+
+        if (item.kind === "code" && item.code) {
+          return <CodeBlock key={idx} code={item.code} language={item.language || ""} />;
+        }
+
+        if (item.kind === "text" && item.text) {
+          return <TextBlock key={idx} text={item.text} />;
+        }
+
+        return null;
       })}
       {workspace && <AiWorkspace spec={workspace} onClose={() => setWorkspace(null)} />}
     </div>

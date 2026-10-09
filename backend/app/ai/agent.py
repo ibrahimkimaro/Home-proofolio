@@ -35,6 +35,9 @@ class AgentResult:
     tools_used: list[str] = field(default_factory=list)
     steps: int = 0  # model calls made
     seconds: float = 0.0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 def history_messages(lines: list[str]) -> list:
@@ -91,22 +94,54 @@ async def run_agent(llm, system: str, history: list, user_input: str, tools: lis
         if on_state:
             await on_state(state)
 
+    # Deduplicate tools by name so the LLM never receives duplicate function declarations
+    seen_tool_names = set()
+    unique_tools = []
+    for t in tools:
+        if t.name not in seen_tool_names:
+            seen_tool_names.add(t.name)
+            unique_tools.append(t)
+    tools = unique_tools
+
     max_steps = max_steps or settings.ai_max_tool_steps
     by_name = {t.name: t for t in tools}
     model = llm.bind_tools(tools) if tools else llm
     messages = [SystemMessage(content=system), *history, HumanMessage(content=user_input)]
     used: list[str] = []
     calls_made = 0
+    prompt_tokens = 0
+    completion_tokens = 0
+    total_tokens = 0
+
+    def add_usage(msg):
+        nonlocal prompt_tokens, completion_tokens, total_tokens
+        usage = getattr(msg, "usage_metadata", None) or getattr(msg, "response_metadata", {}).get("token_usage", {})
+        if isinstance(usage, dict):
+            p = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+            c = usage.get("output_tokens") or usage.get("completion_tokens") or 0
+            t = usage.get("total_tokens") or (p + c)
+            prompt_tokens += p
+            completion_tokens += c
+            total_tokens += t
 
     def done(text: str) -> AgentResult:
-        result = AgentResult(text, used, calls_made, round(time.perf_counter() - started, 2))
-        log.info("ai turn: %d model call(s), tools=%s, %.1fs", result.steps, used or "-", result.seconds)
+        nonlocal prompt_tokens, completion_tokens, total_tokens
+        if total_tokens == 0:
+            prompt_tokens = sum(len(str(getattr(m, "content", ""))) for m in messages) // 4
+            completion_tokens = max(1, len(text) // 4)
+            total_tokens = prompt_tokens + completion_tokens
+        result = AgentResult(
+            text, used, calls_made, round(time.perf_counter() - started, 2),
+            prompt_tokens, completion_tokens, total_tokens
+        )
+        log.info("ai turn: %d model call(s), tools=%s, %.1fs, tokens=%d", result.steps, used or "-", result.seconds, total_tokens)
         return result
 
     for _ in range(max_steps):
         await say(think_state)
         answer = await model.ainvoke(messages)
         calls_made += 1
+        add_usage(answer)
         calls = list(getattr(answer, "tool_calls", None) or [])
         broken = list(getattr(answer, "invalid_tool_calls", None) or [])  # arguments that were not valid JSON
         if not calls and not broken:
@@ -130,7 +165,9 @@ async def run_agent(llm, system: str, history: list, user_input: str, tools: lis
     await say(think_state)
     answer = await llm.ainvoke([*messages, HumanMessage(content=FINISH)])
     calls_made += 1
+    add_usage(answer)
     text = message_text(answer)
     if not text:
         raise EmptyReply("the model returned an empty answer")
     return done(text)
+
