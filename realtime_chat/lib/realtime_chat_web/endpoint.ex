@@ -4,7 +4,10 @@ defmodule RealtimeChatWeb.Endpoint do
   socket "/socket", RealtimeChatWeb.UserSocket,
     websocket: [
       check_origin: false,
-      timeout: 45_000
+      timeout: 45_000,
+      # The host the browser used to reach us (x-forwarded-host when Next proxies /socket): the
+      # default TURN host for calls (Calls.ice_servers/2).
+      connect_info: [:uri, :x_headers]
     ],
     longpoll: false
 

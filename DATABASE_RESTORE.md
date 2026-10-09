@@ -1,6 +1,12 @@
 # Database Backup & Restore Guide
 
-This repository includes a full PostgreSQL database dump in `database_backup.sql`.
+This repository includes a full PostgreSQL database dump in `database_backup.sql` (last updated 2026-10-04, schema version `d1f3b5c7e9a8`).
+
+Good to know:
+- It restores into an **empty** database. Do it before the backend has created any tables (start only `db`, restore, then start the rest). To start over on a PC that already has data: `docker compose down -v`, then follow the steps below.
+- Sign-in sessions and push-notification subscriptions are left out on purpose: everyone signs in again on the new PC.
+- Uploaded files (profile pictures, chat attachments) live in `backend/uploads/`, which is not in git. Copy that folder across too if you want the pictures.
+- The dump holds real accounts (emails, password hashes), so keep this repository private.
 
 ---
 
@@ -15,8 +21,19 @@ If running via Docker Compose (`docker compose up -d`):
    ```
 
 2. **Wait a few seconds for Postgres to become healthy, then restore the backup:**
+
+   **Windows (PowerShell / Command Prompt):**
+   ```cmd
+   cmd.exe /c "docker exec -i home-proofolio-db-1 psql -U ibrahim_kimaro -d home_proofolio_db < database_backup.sql"
+   ```
+   *Or in PowerShell:*
+   ```powershell
+   Get-Content -Raw database_backup.sql | docker exec -i home-proofolio-db-1 psql -U ibrahim_kimaro -d home_proofolio_db
+   ```
+
+   **Linux / macOS (Bash):**
    ```bash
-   docker exec -i home_proofolio-db-1 psql -U ibrahim_kimaro -d home_proofolio_db < database_backup.sql
+   docker exec -i home-proofolio-db-1 psql -U ibrahim_kimaro -d home_proofolio_db < database_backup.sql
    ```
 
 3. **Start the rest of the stack:**
@@ -45,5 +62,5 @@ If you have PostgreSQL installed directly on your machine:
 ## Verifying the Restore
 Check that the tables and users are present:
 ```bash
-docker exec -it home_proofolio-db-1 psql -U ibrahim_kimaro -d home_proofolio_db -c "SELECT email, username, fullname FROM users;"
+docker exec -it home-proofolio-db-1 psql -U ibrahim_kimaro -d home_proofolio_db -c "SELECT email, username, fullname FROM users;"
 ```

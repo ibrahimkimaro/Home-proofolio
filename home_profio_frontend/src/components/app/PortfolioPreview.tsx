@@ -25,10 +25,10 @@ export function PortfolioPreview({ user, roles, publicCount }: { user: User; rol
     <Link
       href="/portfolio"
       aria-label="Customize your public portfolio"
-      className="group flex flex-col pf-surface rounded-2xl border border-hairline bg-paper p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+      className="group flex flex-col pf-surface rounded-2xl border border-hairline bg-paper p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md overflow-hidden"
     >
       {/* Mini browser frame */}
-      <div className="relative overflow-hidden rounded-xl border border-hairline bg-paper-dim">
+      <div className="relative overflow-hidden rounded-xl border border-hairline bg-paper-dim [contain:paint]">
         <span aria-hidden="true" className="pf-shine pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-paper/90 to-transparent" />
         <div className="mx-auto mt-2.5 flex w-fit items-center gap-2 rounded-md border border-hairline bg-paper px-2.5 py-1">
           {[10, 14, 12, 16].map((w, k) => (

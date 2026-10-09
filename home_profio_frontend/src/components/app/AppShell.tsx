@@ -6,9 +6,13 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Award,
+  BookMarked,
   BookOpen,
   Briefcase,
   Compass,
+  FileText,
+  Headset,
+  History,
   Home,
   LayoutGrid,
   LogOut,
@@ -20,6 +24,7 @@ import {
   Search,
   Settings,
   Shield,
+  Sparkles,
   UserRound,
   Users,
   X,
@@ -29,26 +34,94 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { AvatarImage } from "@/components/app/AvatarImage";
 import { AnnouncementBar } from "@/components/app/AnnouncementBar";
 import { ActivationBanner } from "@/components/app/Activation";
+import { CodeBanner } from "@/components/app/CodePrompt";
+import { OnboardingFlush } from "@/components/app/OnboardingFlush";
 import { NotificationBell } from "@/components/app/Notifications";
-import { adoptAccountAppearance, type Appearance } from "@/lib/appearance";
-import { fetchCurrentUser, logoutUser, mediaUrl, type User } from "@/lib/api";
+import { adoptAccountAppearance, forgetAdoptedAppearance, type Appearance } from "@/lib/appearance";
+import {
+  clearAllAuthStorage,
+  fetchCurrentUser,
+  getCachedUser,
+  isUserCacheFresh,
+  logoutUser,
+  mediaUrl,
+  setCachedUser,
+  type LogoutFeedbackPayload,
+  type User,
+} from "@/lib/api";
 import { UniversalWorkForm } from "@/components/app/UniversalWorkForm";
 import { ChatNotifier, unreadTotal, useChatInbox } from "@/components/chat/ChatNotifier";
+import { CallOverlay } from "@/components/chat/CallOverlay";
+import { LogoutModal } from "@/components/app/LogoutModal";
 
 export const CAPTURE_EVENT = "proofolio:capture";
+export { AppShellSkeleton } from "./AppShellSkeleton";
 
-/** Loads the signed-in user; sends visitors to /login. */
+export function getCachedSessionUser(): User | null {
+  return getCachedUser({ allowStale: true });
+}
+
+export function setCachedSessionUser(u: User | null) {
+  setCachedUser(u);
+}
+
+/** Loads the signed-in user with instant synchronous cache; sends visitors to /login. */
 export function useSession() {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUserState] = useState<User | null>(getCachedSessionUser);
+
   useEffect(() => {
-    fetchCurrentUser()
-      .then((u) => {
-        adoptAccountAppearance(u.preferences?.appearance as Partial<Appearance> | undefined);
-        setUser(u);
-      })
-      .catch(() => router.replace("/login"));
+    let active = true;
+
+    const onUserUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<User>;
+      if (active && customEvent.detail) {
+        setUserState(customEvent.detail);
+      }
+    };
+    const onUserCleared = () => {
+      if (active) {
+        setUserState(null);
+        router.replace("/login");
+      }
+    };
+
+    window.addEventListener("proofolio:user-updated", onUserUpdated);
+    window.addEventListener("proofolio:user-cleared", onUserCleared);
+
+    // Only hit the network if cache is absent or stale (eliminates redundant /auth/me calls)
+    if (!isUserCacheFresh()) {
+      fetchCurrentUser()
+        .then((u) => {
+          if (!active) return;
+          adoptAccountAppearance(u.preferences?.appearance as Partial<Appearance> | undefined);
+          setUserState(u);
+        })
+        .catch((err) => {
+          if (!active) return;
+          // Only redirect to login on true unauthenticated responses (401/403).
+          if (err && (err.status === 401 || err.status === 403)) {
+            clearAllAuthStorage();
+            router.replace("/login");
+          }
+        });
+    }
+
+    return () => {
+      active = false;
+      window.removeEventListener("proofolio:user-updated", onUserUpdated);
+      window.removeEventListener("proofolio:user-cleared", onUserCleared);
+    };
   }, [router]);
+
+  const setUser = (value: User | null | ((prev: User | null) => User | null)) => {
+    setUserState((prev) => {
+      const updated = typeof value === "function" ? value(prev) : value;
+      setCachedSessionUser(updated);
+      return updated;
+    });
+  };
+
   return [user, setUser] as const;
 }
 
@@ -63,8 +136,8 @@ export function Avatar({ name, src, className = "h-9 w-9 text-[13px]" }: { name:
 const PLACES: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/home", label: "Home", icon: Home },
   { href: "/chat", label: "Messages", icon: MessageSquare },
+  { href: "/ai", label: "AI Assistant", icon: Sparkles },
   { href: "/discover", label: "Discover", icon: Compass },
-  { href: "/profile", label: "Profile", icon: UserRound },
 ];
 
 export interface CommunityItem {
@@ -76,6 +149,20 @@ export interface CommunityItem {
 }
 
 const COMMUNITY_ITEMS: CommunityItem[] = [
+  {
+    href: "/memories",
+    label: "Memories & Mood",
+    sub: "Timeline & feelings",
+    icon: History,
+    color: "bg-pink-500/10 text-pink-600 dark:text-pink-400 border-pink-500/20",
+  },
+  {
+    href: "/stories",
+    label: "Stories & Journeys",
+    sub: "Narrated experiences",
+    icon: BookMarked,
+    color: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  },
   {
     href: "/work",
     label: "Work & Projects",
@@ -126,6 +213,13 @@ const COMMUNITY_ITEMS: CommunityItem[] = [
     color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
   },
   {
+    href: "/cv",
+    label: "Curriculum Vitae",
+    sub: "Signed CV to share",
+    icon: FileText,
+    color: "bg-slate-500/10 text-slate-700 dark:text-slate-300 border-slate-500/20",
+  },
+  {
     href: "/profile#roles",
     label: "Roles & Orgs",
     sub: "Teams & companies",
@@ -146,12 +240,15 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
   const router = useRouter();
   const [communityHubOpen, setCommunityHubOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [logoutModalOpen, setLogoutModalOpen] = useState(false);
   const [modalCategory, setModalCategory] = useState<string | undefined>(undefined);
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
   const chatUnread = unreadTotal(useChatInbox(user.id));
   const badgeFor = (href: string) => (href === "/chat" ? chatUnread : 0);
 
   const isCommunityActive = [
+    "/memories",
+    "/stories",
     "/work",
     "/problems",
     "/learning",
@@ -159,6 +256,7 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
     "/discussions",
     "/articles",
     "/portfolio",
+    "/cv",
     "/discover",
   ].some((path) => pathname === path || pathname.startsWith(`${path}/`));
 
@@ -185,13 +283,33 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
     setCreateModalOpen(true);
   }
 
-  async function signOut() {
-    await logoutUser().catch(() => {});
+  function requestSignOut() {
+    setLogoutModalOpen(true);
+  }
+
+  async function handleConfirmLogout(feedback?: LogoutFeedbackPayload) {
+    clearAllAuthStorage();
+    await logoutUser(feedback).catch(() => { });
+    forgetAdoptedAppearance();
     router.replace("/login");
   }
 
+  // Not activated in time: only /suspended (support + the code dialog) is open.
+  const suspended = !!user.suspended;
+  useEffect(() => {
+    if (suspended) router.replace("/suspended");
+  }, [suspended, router]);
+  // overflow-x:hidden on body/wrapper makes them scroll containers and breaks the sticky sidebar/header; clip doesn't.
+  useEffect(() => {
+    document.body.style.overflowX = "clip";
+    return () => {
+      document.body.style.overflowX = "";
+    };
+  }, []);
+  if (suspended) return <div className="min-h-screen bg-paper-dim" />;
+
   return (
-    <div className="theme-mono pf-ambient flex min-h-screen w-full bg-paper-dim text-ink-800">
+    <div className="theme-mono pf-ambient flex min-h-screen w-full max-w-full overflow-x-clip bg-paper-dim text-ink-800">
       {/* Desktop sidebar: the places, community, and public face */}
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col overflow-y-auto border-r border-hairline bg-paper px-3 md:flex">
         <Link href="/home" className="flex h-16 shrink-0 items-center gap-2.5 px-3">
@@ -202,6 +320,10 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
           <Suspense>
             <MainLinks isActive={isActive} badgeFor={badgeFor} />
           </Suspense>
+          <SideGroup title="Journey & Reflection">
+            <SideLink href="/memories" label="Memories & Mood" icon={History} active={isActive("/memories")} />
+            <SideLink href="/stories" label="Stories & Journeys" icon={BookMarked} active={isActive("/stories")} />
+          </SideGroup>
           <SideGroup title="Community & Content">
             <SideLink href="/work" label="Work & Projects" icon={Briefcase} active={isActive("/work")} />
             <SideLink href="/problems" label="Problems Solved" icon={Puzzle} active={isActive("/problems")} />
@@ -212,18 +334,20 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
           </SideGroup>
           <SideGroup title="Public face">
             <SideLink href="/portfolio" label="Portfolio" icon={PanelsTopLeft} active={isActive("/portfolio")} />
-            <SideLink href="/profile#roles" label="Roles & organizations" icon={Users} active={false} />
+            <SideLink href="/cv" label="Curriculum Vitae (CV)" icon={FileText} active={isActive("/cv")} />
           </SideGroup>
           <SideGroup title="Account">
+            <SideLink href="/profile" label="Profile" icon={UserRound} active={isActive("/profile")} />
             <SideLink href="/settings" label="Settings" icon={Settings} active={isActive("/settings")} />
+            <SideLink href="/support" label="Help & Support" icon={Headset} active={isActive("/support")} />
           </SideGroup>
         </nav>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 w-full max-w-full flex-1 flex-col overflow-x-hidden">
         {/* Top bar: search, Add, account (desktop) / logo, account (mobile) */}
         <header
-          className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-hairline/50 bg-paper/85 px-4 backdrop-blur-xl sm:px-6"
+          className="sticky top-0 z-30 flex h-16 w-full items-center gap-3 border-b border-hairline/50 bg-paper/85 px-4 backdrop-blur-xl sm:px-6"
           style={{ paddingTop: "env(safe-area-inset-top)" }}
         >
           <div className="flex items-center gap-2.5 md:hidden">
@@ -254,27 +378,38 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
             <button
               type="button"
               onClick={add}
+              aria-label="Add"
+              className="flex h-9 w-9 items-center justify-center rounded-lg bg-ink text-paper shadow-xs transition-transform active:scale-95 md:hidden cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={add}
               className="hidden h-10 items-center gap-2 rounded-lg bg-ink px-5 text-[14px] font-semibold text-paper transition-transform hover:scale-[1.02] active:scale-[0.98] md:flex cursor-pointer"
             >
               <Plus className="h-4 w-4" />
               Add
             </button>
             <NotificationBell />
-            <AccountMenu user={user} onSignOut={signOut} />
+            <AccountMenu user={user} onSignOut={requestSignOut} />
           </div>
         </header>
 
         <ActivationBanner user={user} />
+        <CodeBanner />
+        <OnboardingFlush />
         <AnnouncementBar />
-        <main className={`flex-1 ${pathname === "/chat" ? "pb-0 md:pb-12 overflow-hidden" : "pb-28 md:pb-12"}`}>{children}</main>
+        <main className={`flex-1 ${pathname === "/chat" || pathname === "/ai" ? "pb-20 md:pb-12 overflow-hidden" : "pb-28 md:pb-12"}`}>{children}</main>
       </div>
 
       <ChatNotifier userId={user.id} />
+      <CallOverlay userId={user.id} />
 
-      {/* Mobile bottom bar: Home, Messages, Add, Community Hub, Profile */}
+      {/* Mobile bottom bar: Home, Messages, AI Assistant, Community Hub, Profile */}
       <nav
         aria-label="Main"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-hairline/60 bg-paper/90 backdrop-blur-xl md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 w-full border-t border-hairline/60 bg-paper/90 backdrop-blur-xl md:hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <ul className="grid h-16 grid-cols-5 items-center">
@@ -284,34 +419,23 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
           {/* 2. Messages */}
           <TabLink href="/chat" label="Messages" icon={MessageSquare} active={isActive("/chat")} badge={badgeFor("/chat")} />
 
-          {/* 3. Center Add Button */}
-          <li className="flex justify-center">
-            <button
-              type="button"
-              onClick={add}
-              aria-label="Add"
-              className="-mt-6 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-paper shadow-lg shadow-black/20 transition-transform active:scale-95 cursor-pointer"
-            >
-              <Plus className="h-6 w-6" />
-            </button>
-          </li>
+          {/* 3. AI Assistant */}
+          <TabLink href="/ai" label="AI Assistant" icon={Sparkles} active={isActive("/ai")} />
 
-          {/* 4. Community Floating Hub Trigger (replaces Discover) */}
+          {/* 4. Community Floating Hub Trigger */}
           <li className="flex justify-center">
             <button
               type="button"
               onClick={() => setCommunityHubOpen((open) => !open)}
               aria-label="Community Hub"
               aria-expanded={communityHubOpen}
-              className={`flex flex-col items-center gap-1 text-[11px] w-full transition-all cursor-pointer ${
-                isCommunityActive || communityHubOpen ? "font-semibold text-ink-800" : "text-slate hover:text-ink-800"
-              }`}
+              className={`flex flex-col items-center gap-1 text-[11px] w-full transition-all cursor-pointer ${isCommunityActive || communityHubOpen ? "font-semibold text-ink-800" : "text-slate hover:text-ink-800"
+                }`}
             >
               <span className="relative">
                 <LayoutGrid
-                  className={`h-[22px] w-[22px] transition-all duration-200 ${
-                    communityHubOpen ? "scale-115 text-ink rotate-45" : ""
-                  }`}
+                  className={`h-[22px] w-[22px] transition-all duration-200 ${communityHubOpen ? "scale-115 text-ink rotate-45" : ""
+                    }`}
                   strokeWidth={isCommunityActive || communityHubOpen ? 2.2 : 1.8}
                 />
                 {isCommunityActive && (
@@ -371,30 +495,26 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
                     key={item.href}
                     href={item.href}
                     onClick={() => setCommunityHubOpen(false)}
-                    className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border transition-all active:scale-95 text-center group cursor-pointer ${
-                      active
-                        ? "bg-ink text-paper border-ink shadow-sm"
-                        : "bg-paper-dim/40 hover:bg-paper-dim border-hairline/50 hover:border-hairline"
-                    }`}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border transition-all active:scale-95 text-center group cursor-pointer ${active
+                      ? "bg-ink text-paper border-ink shadow-sm"
+                      : "bg-paper-dim/40 hover:bg-paper-dim border-hairline/50 hover:border-hairline"
+                      }`}
                   >
                     <div
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center border transition-transform group-hover:scale-110 ${
-                        active ? "bg-paper/20 text-paper border-transparent" : item.color
-                      }`}
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center border transition-transform group-hover:scale-110 ${active ? "bg-paper/20 text-paper border-transparent" : item.color
+                        }`}
                     >
                       <Icon className="w-4.5 h-4.5" />
                     </div>
                     <span
-                      className={`mt-1.5 text-[11px] font-semibold tracking-tight leading-tight line-clamp-1 ${
-                        active ? "text-paper" : "text-ink-900"
-                      }`}
+                      className={`mt-1.5 text-[11px] font-semibold tracking-tight leading-tight line-clamp-1 ${active ? "text-paper" : "text-ink-900"
+                        }`}
                     >
                       {item.label}
                     </span>
                     <span
-                      className={`text-[9px] line-clamp-1 leading-none mt-0.5 ${
-                        active ? "text-paper/80" : "text-slate"
-                      }`}
+                      className={`text-[9px] line-clamp-1 leading-none mt-0.5 ${active ? "text-paper/80" : "text-slate"
+                        }`}
                     >
                       {item.sub}
                     </span>
@@ -435,6 +555,13 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
           </div>
         </div>
       )}
+
+      <LogoutModal
+        isOpen={logoutModalOpen}
+        user={user}
+        onClose={() => setLogoutModalOpen(false)}
+        onConfirm={handleConfirmLogout}
+      />
     </div>
   );
 }
@@ -468,9 +595,8 @@ function SideLink({
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
-      className={`flex items-center gap-3 rounded-lg px-3 py-2 text-[14px] transition-colors ${
-        active ? "bg-ink font-semibold text-paper" : "text-slate hover:bg-paper-dim hover:text-ink-800"
-      }`}
+      className={`flex items-center gap-3 rounded-lg px-3 py-2 text-[14px] transition-colors ${active ? "bg-ink font-semibold text-paper" : "text-slate hover:bg-paper-dim hover:text-ink-800"
+        }`}
     >
       <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={1.8} />
       {label}
@@ -568,8 +694,14 @@ function AccountMenu({ user, onSignOut }: { user: User; onSignOut: () => void })
             <span className="text-slate">Theme</span>
             <ThemeToggle />
           </div>
+          <Link href="/profile" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">
+            <UserRound className="h-4 w-4" /> Profile
+          </Link>
           <Link href="/settings" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">
             <Settings className="h-4 w-4" /> Settings
+          </Link>
+          <Link href="/support" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">
+            <Headset className="h-4 w-4 text-emerald-600" /> Help & Support
           </Link>
           {user.is_admin && (
             <Link href="/admin" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[14px] hover:bg-paper-dim">

@@ -110,7 +110,7 @@ export function Hero() {
             <span className="text-slate font-normal">Next-Gen Credential Network</span>
           </motion.div>
 
-          <motion.h1
+          <motion.h2
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
@@ -120,7 +120,7 @@ export function Hero() {
             <span className="bg-gradient-to-r from-ink-700 via-brass-dark to-berry bg-clip-text text-transparent">
               see it happen.
             </span>
-          </motion.h1>
+          </motion.h2>
 
           <motion.p
             initial={{ opacity: 0, y: 18 }}

@@ -140,8 +140,8 @@ export function JourneyShowcase() {
                     setActiveIndex(idx);
                   }}
                   className={`group relative flex items-center gap-2 rounded-xl px-3 sm:px-4 py-1.5 sm:py-2 text-[12px] sm:text-sm font-medium transition-all cursor-pointer ${isActive
-                      ? "bg-ink text-paper shadow-sm"
-                      : "bg-paper-dim/60 text-slate hover:bg-paper-dim hover:text-ink-700"
+                    ? "bg-ink text-paper shadow-sm"
+                    : "bg-paper-dim/60 text-slate hover:bg-paper-dim hover:text-ink-700"
                     }`}
                 >
                   <span
@@ -204,51 +204,8 @@ export function JourneyShowcase() {
                   {activeStage.detail}
                 </p>
 
-                {/* Evidence Artifact Pill Box */}
-                <div className="rounded-2xl border border-hairline bg-paper p-3.5 shadow-2xs">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate">
-                    Tangible Evidence Produced
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {activeStage.evidence.split(" · ").map((e) => (
-                      <span
-                        key={e}
-                        className="rounded-md bg-paper-dim px-2 py-0.5 text-[11px] font-medium text-ink-700"
-                      >
-                        {e}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
                 {/* Navigation arrows */}
-                <div className="flex items-center gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAutoPlaying(false);
-                      setActiveIndex((prev) => (prev > 0 ? prev - 1 : STAGES.length - 1));
-                    }}
-                    className="flex h-10 w-10 items-center justify-center rounded-full border border-hairline bg-paper text-ink-700 shadow-2xs transition-all hover:bg-paper-dim hover:scale-105 active:scale-95 cursor-pointer"
-                    aria-label="Previous stage"
-                  >
-                    <ChevronLeft className="h-5 w-5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAutoPlaying(false);
-                      setActiveIndex((prev) => (prev + 1) % STAGES.length);
-                    }}
-                    className="flex h-10 w-10 items-center justify-center rounded-full border border-hairline bg-paper text-ink-700 shadow-2xs transition-all hover:bg-paper-dim hover:scale-105 active:scale-95 cursor-pointer"
-                    aria-label="Next stage"
-                  >
-                    <ChevronRight className="h-5 w-5" />
-                  </button>
-                  <span className="text-[12px] text-slate font-medium">
-                    Use arrows or click stages to explore
-                  </span>
-                </div>
+
               </div>
 
               {/* Right Column: Visual Showcase Frame */}
@@ -266,56 +223,10 @@ export function JourneyShowcase() {
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none" />
 
-                  {/* Glassmorphic Stage Label Overlay */}
-                  <div className="glass-panel-dark absolute bottom-4 left-4 right-4 flex items-center justify-between rounded-xl px-4 py-2.5 text-paper">
-                    <div className="flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-full bg-brass animate-pulse" />
-                      <span className="text-[13px] font-medium">
-                        Stage {activeStage.step}: {activeStage.word} in Action
-                      </span>
-                    </div>
-                    <span className="font-mono text-[11px] text-mist-dim">
-                      Proofolio Record #0{activeIndex + 1}
-                    </span>
-                  </div>
                 </div>
               </div>
             </motion.div>
           </AnimatePresence>
-        </div>
-
-        {/* Stage mini-card grid for instant scanability */}
-        <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-          {STAGES.map((stage, idx) => {
-            const isSelected = idx === activeIndex;
-            return (
-              <button
-                key={stage.word}
-                type="button"
-                onClick={() => {
-                  setIsAutoPlaying(false);
-                  setActiveIndex(idx);
-                }}
-                className={`apple-card-hover group flex flex-col items-start rounded-xl border p-3 text-left transition-all cursor-pointer ${isSelected
-                    ? "border-brass bg-paper ring-2 ring-brass/20 shadow-md"
-                    : "border-hairline bg-paper/60 hover:bg-paper hover:border-slate/40"
-                  }`}
-              >
-                <span className="font-mono text-[10px] font-bold text-slate">
-                  {stage.step}
-                </span>
-                <span
-                  className={`mt-1 font-display text-[14px] ${isSelected ? "text-ink-700 font-bold" : "text-slate group-hover:text-ink-700"
-                    }`}
-                >
-                  {stage.word}
-                </span>
-                <span className="mt-1 line-clamp-1 text-[11px] text-slate/70">
-                  {stage.tagline}
-                </span>
-              </button>
-            );
-          })}
         </div>
       </div>
     </section>

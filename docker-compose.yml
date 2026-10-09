@@ -1,3 +1,5 @@
+name: home-proofolio
+
 services:
   db:
     image: postgres:16-alpine
@@ -9,7 +11,7 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ibrahim_kimaro -d home_proofolio_db"]
+      test: [ "CMD-SHELL", "pg_isready -U ibrahim_kimaro -d home_proofolio_db" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -19,8 +21,33 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://ibrahim_kimaro:kimmy001@db:5432/home_proofolio_db
-      SECRET_KEY: change-me
-      CORS_ORIGINS: '["http://localhost:3000"]'
+      # Signs chat tokens and file links. Set a long random value in .env before exposing the app.
+      SECRET_KEY: ${SECRET_KEY:-change-me}
+      CORS_ORIGINS: '["http://localhost:3000", "http://localhost:3001", "https://*.devtunnels.ms"]'
+      # Live pushes (group invites, "X joined" lines) go through realtime_chat's /internal/events.
+      REALTIME_INTERNAL_URL: http://realtime_chat:4000
+      # Outgoing email for Admin > Messages (values live in .env; empty = email stays a manual export).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Home Proofolio}
+      SMTP_CA_FILE: ${SMTP_CA_FILE:-}
+      # Web Push: the public key goes to browsers, the private key signs each push. Keys live in .env.
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:homeproofolio@gmail.com}
+      WATCHFILES_FORCE_POLLING: "true"
+      # AI Provider: "gemini" (default) | "ollama" | "huggingface"
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-AQ.Ab8RN6LXWrFkjoFZ__A0kJqmX89KIwwAiTCj5PHolyZRotX1-g}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
+      # Host Ollama bridge (forwards host 127.0.0.1:11434 to container-accessible 11435)
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:3b}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11435}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
@@ -29,6 +56,12 @@ services:
     volumes:
       - ./backend:/app
 
+  ollama-bridge:
+    image: alpine/socat
+    network_mode: host
+    restart: unless-stopped
+    command: tcp-listen:11435,fork,reuseaddr tcp-connect:127.0.0.1:11434
+
   realtime_chat:
     build: ./realtime_chat
     restart: unless-stopped
@@ -36,7 +69,16 @@ services:
       MIX_ENV: dev
       PORT: 4000
       DATABASE_URL: postgres://ibrahim_kimaro:kimmy001@db:5432/home_proofolio_db
-      SECRET_KEY: change-me  # must equal backend SECRET_KEY (signs chat tokens)
+      SECRET_KEY: ${SECRET_KEY:-change-me} # must equal backend SECRET_KEY (signs chat tokens)
+      # The backend's address, to ask it to send Web Push notifications.
+      BACKEND_URL: http://backend:8000
+      # Calls: signs short-lived TURN credentials; must equal coturn's static-auth-secret below.
+      # In production also set TURN_HOST (coturn's public name/IP) and TURNS_PORT=5349 (TLS).
+      TURN_SECRET: ${TURN_SECRET:-dev-turn-secret-change-me}
+      TURN_HOST: ${TURN_HOST:-}
+      EXTERNAL_TURN_URLS: ${EXTERNAL_TURN_URLS:-}
+      EXTERNAL_TURN_USERNAME: ${EXTERNAL_TURN_USERNAME:-}
+      EXTERNAL_TURN_CREDENTIAL: ${EXTERNAL_TURN_CREDENTIAL:-}
     depends_on:
       db:
         condition: service_healthy
@@ -49,13 +91,51 @@ services:
       - /app/deps
     command: sh -c "mix deps.get && mix phx.server"
 
+  # STUN/TURN for voice & video calls: relays the (still end-to-end encrypted) media when two
+  # browsers can't reach each other directly. Credentials are minted per user by realtime_chat.
+  # TURN_EXTERNAL_IP = this machine's address as browsers see it (LAN IP in dev, public IP in prod).
+  # On a Linux server prefer `network_mode: host` (no port mapping) and drop the ports below.
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    command:
+      - -n
+      - --log-file=stdout
+      - --fingerprint
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:-dev-turn-secret-change-me}
+      - --realm=proofolio
+      - --listening-port=3478
+      - --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
+      # One relay port per relayed participant: 200 ports = 100 users all relayed at once.
+      # (Kept below 49152: Windows/Hyper-V reserves blocks of the dynamic range.)
+      - --min-port=40000
+      - --max-port=40199
+      - --total-quota=200
+      - --user-quota=10
+      - --max-bps=3000000
+      - --no-cli
+      - --no-multicast-peers
+      # Never relay into the Docker network (db, backend), link-local/cloud metadata or "this" network.
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "40000-40199:40000-40199/udp"
 
   frontend:
     build: ./home_profio_frontend
+    image: home-proofolio-frontend:latest
+    pull_policy: build
     restart: unless-stopped
+    command: npm run dev
     environment:
+      NEXT_MODE: ${NEXT_MODE:-dev}
       NEXT_PUBLIC_API_URL: ""
       API_INTERNAL_URL: http://backend:8000
+      REALTIME_INTERNAL_URL: http://realtime_chat:4000
       NEXT_PUBLIC_SITE_URL: http://localhost:3000
     depends_on:
       - backend
@@ -64,7 +144,45 @@ services:
     volumes:
       - ./home_profio_frontend:/app
       - /app/node_modules
-      - /app/.next
+
+  # Production/Testing Server on Port 3001
+  # Built with 'npm run build:test' and served with 'npm run start:test'.
+  # Fast, minified, pre-rendered production instance without HMR overhead.
+  # Remote tunnels (ngrok, devtunnel, zrok) connect here!
+  frontend_test:
+    build: ./home_profio_frontend
+    image: home-proofolio-frontend:latest
+    pull_policy: build
+    restart: unless-stopped
+    command: sh -c "if [ ! -d /app/.next_test ] || [ ! -f /app/.next_test/BUILD_ID ]; then npm run build:test; fi && npm run start:test"
+    environment:
+      NODE_ENV: production
+      NEXT_DIST_DIR: .next_test
+      PORT: 3001
+      NEXT_PUBLIC_API_URL: ""
+      API_INTERNAL_URL: http://backend:8000
+      REALTIME_INTERNAL_URL: http://realtime_chat:4000
+      NEXT_PUBLIC_SITE_URL: http://localhost:3001
+    depends_on:
+      - backend
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./home_profio_frontend:/app
+      - /app/node_modules
+      - frontend_test_build:/app/.next_test
+
+  # Public HTTPS for the app (phones only allow calls on https pages), chat and call signaling
+  # included: Next proxies /socket to realtime_chat, so the tunnel only needs the frontend.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://frontend_test:3001
+    depends_on:
+      - frontend_test
 
 volumes:
   db_data:
+    name: home_proofolio_db_data
+  frontend_test_build:
+

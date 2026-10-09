@@ -144,6 +144,7 @@ export function ConfirmButton({
   danger = false,
   disabled = false,
   title,
+  className = "",
 }: {
   onConfirm: () => Promise<void>;
   children: ReactNode;
@@ -151,6 +152,7 @@ export function ConfirmButton({
   danger?: boolean;
   disabled?: boolean;
   title?: string;
+  className?: string;
 }) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -171,19 +173,25 @@ export function ConfirmButton({
   }
 
   const base =
-    "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer";
+    "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-[12px] font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer active:scale-95";
   const tone = armed
     ? danger
-      ? "border-berry bg-berry text-white"
-      : "border-brass bg-brass text-white"
+      ? "border-berry bg-berry text-white shadow-2xs"
+      : "border-brass bg-brass text-white shadow-2xs"
     : danger
-      ? "border-hairline text-berry hover:border-berry/50 hover:bg-berry/5"
-      : "border-hairline text-ink-700 hover:border-brass/50 hover:bg-brass/5";
+      ? "border-hairline/80 bg-paper text-berry hover:border-berry/60 hover:bg-berry/5"
+      : "border-hairline/80 bg-paper text-ink-700 hover:border-brass/60 hover:bg-brass/5 hover:text-brass-dark";
 
   return (
-    <button type="button" onClick={handleClick} disabled={disabled || busy} title={title} className={`${base} ${tone}`}>
-      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-      {armed ? confirmLabel : children}
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={disabled || busy}
+      title={title}
+      className={`${base} ${tone} ${className}`}
+    >
+      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" /> : null}
+      {armed ? <span className="font-semibold">{confirmLabel}</span> : children}
     </button>
   );
 }

@@ -29,14 +29,36 @@ export const metadata: Metadata = {
 const themeScript = `
 (function(){
   try {
-    var saved = localStorage.getItem('proofolio-theme');
-    if (saved === 'dark' || saved === 'light') {
-      document.documentElement.setAttribute('data-theme', saved);
+    var saved = localStorage.getItem('proofolio-theme') || 'light';
+    var isDark = saved === 'dark' || (saved === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : (saved === 'light' ? 'light' : 'light'));
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+      document.documentElement.style.backgroundColor = '#121316';
+      document.documentElement.style.colorScheme = 'dark';
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.documentElement.style.backgroundColor = '#fbfbfd';
+      document.documentElement.style.colorScheme = 'light';
     }
     // Appearance (Settings > Appearance / onboarding): background tone, accent, card material.
     var root = document.documentElement;
     var tone = localStorage.getItem('proofolio-palette');
-    if (tone) root.setAttribute('data-palette', tone);
+    if (tone) {
+      root.setAttribute('data-palette', tone);
+      var toneColors = {
+        'slate': '#121316',
+        'olbongo': '#0a0f0d',
+        'espresso': '#161311',
+        'midnight': '#0c1017',
+        'neutral': '#fafafa',
+        'paper': '#fbfbfd',
+        'warm-paper': '#f3eee4'
+      };
+      if (toneColors[tone]) {
+        root.style.backgroundColor = toneColors[tone];
+      }
+    }
     var accent = localStorage.getItem('proofolio-accent');
     if (accent && /^[a-z]+$/.test(accent)) root.setAttribute('data-accent', accent);
     var custom = localStorage.getItem('proofolio-accent-custom');
@@ -53,7 +75,7 @@ const themeScript = `
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${inter.variable} h-full antialiased`} suppressHydrationWarning>
+    <html lang="en" className={`${inter.variable} h-full antialiased bg-paper text-ink-800`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>

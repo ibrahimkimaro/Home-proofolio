@@ -25,18 +25,44 @@ ALLOWED = {
 }
 IMAGES = {k: v for k, v in ALLOWED.items() if k.startswith("image/")}
 
+# Chat attachments (app/api/chat_files.py): images, PDF and everyday documents. Only images and
+# PDF are ever shown inline; everything else is served as a download (Content-Disposition: attachment).
+DOCUMENTS = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/msword": ".doc",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.ms-powerpoint": ".ppt",
+    "application/zip": ".zip",
+    "application/x-zip-compressed": ".zip",
+    "text/plain": ".txt",
+    "text/csv": ".csv",
+}
+CHAT_ALLOWED = {**ALLOWED, **DOCUMENTS}
+
+ZIP = (b"PK\x03\x04",)  # docx/xlsx/pptx are zip files
+OLE = (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",)  # legacy .doc/.xls/.ppt
+
 # The browser-declared type is just a claim; check the file's first bytes too.
 SIGNATURES = {
     "image/jpeg": (b"\xff\xd8\xff",),
     "image/png": (b"\x89PNG\r\n\x1a\n",),
     "image/gif": (b"GIF87a", b"GIF89a"),
     "application/pdf": (b"%PDF-",),
+    **{t: ZIP for t, ext in DOCUMENTS.items() if ext in (".docx", ".xlsx", ".pptx", ".zip")},
+    **{t: OLE for t, ext in DOCUMENTS.items() if ext in (".doc", ".xls", ".ppt")},
 }
 
 
 def looks_like(content_type: str, data: bytes) -> bool:
     if content_type == "image/webp":
         return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    if content_type in ("text/plain", "text/csv"):  # text has no magic bytes: must be UTF-8, no binary
+        try:
+            return b"\x00" not in data and bool(data.decode("utf-8"))
+        except UnicodeDecodeError:
+            return False
     return data.startswith(SIGNATURES.get(content_type, ()))
 
 router = APIRouter(tags=["files"])

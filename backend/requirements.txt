@@ -11,3 +11,15 @@ bcrypt==4.2.1
 python-multipart==0.0.20
 strawberry-graphql[fastapi]==0.253.1
 graphql-core==3.2.6
+pywebpush
+matplotlib
+langchain-core>=0.3.36
+langchain-openai>=0.3
+langchain-ollama
+mcp>=1.9
+pymupdf
+pymupdf4llm
+pymupdf-fonts
+reportlab
+gradio
+langchain-huggingface

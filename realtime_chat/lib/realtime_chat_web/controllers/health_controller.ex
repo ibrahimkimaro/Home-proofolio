@@ -15,7 +15,8 @@ defmodule RealtimeChatWeb.HealthController do
       status: "healthy",
       websockets: "active",
       presence: "active",
-      channels: ["room:*", "direct:*"]
+      active_calls: RealtimeChat.Calls.count(),
+      channels: ["room:*", "direct:*", "user:*", "call:*"]
     })
   end
 end

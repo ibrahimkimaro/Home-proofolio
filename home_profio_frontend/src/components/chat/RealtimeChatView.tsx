@@ -1,9 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useChatInbox } from "@/components/chat/ChatNotifier";
+import { useCall } from "@/components/chat/CallOverlay";
+import { startCall } from "@/lib/calls";
+import { EmojiPicker } from "@/components/chat/EmojiPicker";
+import { AttachmentView, ContactInfoPanel, UserAvatar } from "@/components/chat/ChatBits";
 import {
+  ChevronDown,
   MessageSquare,
   Users,
   Search,
@@ -21,8 +26,76 @@ import {
   Clock,
   AlertCircle,
   User as UserIcon,
+  Plus,
+  Loader2,
+  Crown,
+  LogOut,
+  UserPlus,
+  Info,
+  Copy,
+  Reply,
+  Forward,
+  Pencil,
+  Trash2,
+  Ban,
+  Camera,
+  Pin,
+  PinOff,
+  SmilePlus,
 } from "lucide-react";
-import { User, fetchChatContacts } from "@/lib/api";
+import {
+  User,
+  fetchChatContacts,
+  searchChatMembers,
+  fetchChatGroups,
+  fetchGroupDetail,
+  createChatGroup,
+  addGroupMembers,
+  removeGroupMember,
+  setGroupMemberRole,
+  type ChatContactItem,
+  type ChatGroupItem,
+  type GroupDetail,
+  type ChatAttachment,
+  uploadChatAttachment,
+  editChatGroup,
+  uploadGroupAvatar,
+  removeGroupAvatar,
+  deleteChatGroup,
+  clearChat,
+  fetchPins,
+  pinMessage,
+  unpinMessage,
+  type ChatPinItem,
+} from "@/lib/api";
+
+function formatChatTime(dateStr?: string): string {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    const now = new Date();
+    const isToday =
+      d.getDate() === now.getDate() &&
+      d.getMonth() === now.getMonth() &&
+      d.getFullYear() === now.getFullYear();
+    if (isToday) {
+      return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+    const yesterday = new Date();
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday =
+      d.getDate() === yesterday.getDate() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getFullYear() === yesterday.getFullYear();
+    if (isYesterday) {
+      return "Yesterday";
+    }
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  } catch {
+    return dateStr;
+  }
+}
 import {
   ChatMessage,
   TypingEvent,
@@ -32,11 +105,14 @@ import {
   sendChannelMessage,
   sendChannelTyping,
   sendChannelReaction,
+  sendEditMessage,
+  sendDeleteMessage,
   sendChannelReadReceipt,
   mergeMessages,
   loadOlder,
   subscribeInbox,
   setOpenTopic,
+  messagePreview,
 } from "@/lib/realtime";
 import { Channel, Socket } from "phoenix";
 
@@ -52,14 +128,60 @@ export interface ChatContact {
   roomId?: string;
   lastMessage?: string;
   lastMessageTime?: string;
+  lastTimestamp?: number;
   unreadCount?: number;
   membersCount?: number;
+  myRole?: "admin" | "member";
 }
+
+const toTimestamp = (timeStr?: string | null): number => {
+  if (!timeStr) return 0;
+  const t = new Date(timeStr).getTime();
+  return isNaN(t) ? 0 : t;
+};
+
+const groupToContact = (g: ChatGroupItem): ChatContact => ({
+  id: g.id,
+  name: g.name,
+  username: g.username,
+  role: g.role,
+  type: "group",
+  avatar: g.avatar ?? undefined,
+  roomId: g.roomId,
+  isOnline: false,
+  membersCount: g.membersCount,
+  myRole: g.myRole,
+  lastMessage: g.lastMessage ?? undefined,
+  lastMessageTime: g.lastMessageTime ? formatChatTime(g.lastMessageTime) : undefined,
+  lastTimestamp: toTimestamp(g.lastMessageTime),
+});
+
+const memberToContact = (m: ChatContactItem): ChatContact => ({
+  id: m.id,
+  name: m.name,
+  username: m.username,
+  role: m.role,
+  avatar: m.avatar || undefined,
+  type: "direct",
+  pairId: m.pairId,
+  isOnline: false,
+  lastMessage: m.lastMessage,
+  lastMessageTime: m.lastMessageTime ? formatChatTime(m.lastMessageTime) : undefined,
+  lastTimestamp: toTimestamp(m.lastMessageTime),
+  unreadCount: m.unreadCount,
+});
+
+// "X joined the group", "X made Y an admin"…: stored by the backend with a "sys-" client id.
+const isSystem = (m: ChatMessage) => !!m.client_id?.startsWith("sys-");
+
+const previewOf = messagePreview;
+
+const errText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
 
 // Real contacts are loaded from /chat/contacts directly from PostgreSQL
 const INITIAL_CONTACTS: ChatContact[] = [];
 
-const COMMON_EMOJIS = ["❤️", "👍", "🔥", "🚀", "😂", "👏", "🎉", "💯", "🙏", "⚡"];
+const EDIT_WINDOW_MS = 3600 * 1000; // the server lets the author fix a message for an hour
 
 const TYPING_SEND_EVERY = 2000; // ms between "still typing" pings while keys are pressed
 const TYPING_IDLE = 3000; // send "stopped typing" after this long without a key
@@ -103,11 +225,13 @@ export function RealtimeChatView({ user }: { user: User }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState("");
-  const [typingUsers, setTypingUsers] = useState<Record<string, { name: string; until: number }>>({});
+  const [typingUsers, setTypingUsers] = useState<Record<string, { name: string; until: number; uploading?: boolean }>>({});
   const [onlineUsers, setOnlineUsers] = useState<UserPresence[]>([]); // in the open conversation
   const inbox = useChatInbox(me); // unread counts, "typing…" to me elsewhere, who is online
   const unread = inbox?.unread ?? {};
   const onlineIds = inbox?.online ?? new Set<string>();
+  const call = useCall();
+  const inCall = !!call && call.phase !== "ended";
   const [hasOlder, setHasOlder] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -115,31 +239,96 @@ export function RealtimeChatView({ user }: { user: User }) {
   const [chatError, setChatError] = useState<string | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [replyMessage, setReplyMessage] = useState<ChatMessage | null>(null);
+  // Fixing / taking back messages, and the emoji picker on a message's reactions.
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [menuMsgId, setMenuMsgId] = useState<string | null>(null);
+  // Where the open message menu sits, in screen coordinates (fixed, so the chat's scroll box never clips it).
+  const [menuPos, setMenuPos] = useState<React.CSSProperties>({});
+  const [infoMsg, setInfoMsg] = useState<ChatMessage | null>(null); // "Message info" dialog
+  const [forwardingMsg, setForwardingMsg] = useState<ChatMessage | null>(null); // "Forward message" dialog
+  const pendingForwardRef = useRef<{ text: string; attachment?: ChatAttachment } | null>(null);
+  const [reactPickerId, setReactPickerId] = useState<string | null>(null);
+  const [msgNotice, setMsgNotice] = useState<string | null>(null);
+  // Messages I pinned in the open chat (personal), most recently pinned first.
+  const [pins, setPins] = useState<ChatPinItem[]>([]);
+  const pinnedIds = new Set(pins.map((p) => p.message_id));
+  const [nowMs, setNowMs] = useState(0); // 0 until the first tick: the server decides anyway
+  useEffect(() => {
+    const first = setTimeout(() => setNowMs(Date.now()), 0);
+    const tick = setInterval(() => setNowMs(Date.now()), 30000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(tick);
+    };
+  }, []);
+  // Group admin: name / description being edited in the members panel.
+  const [gName, setGName] = useState("");
+  const [gTopic, setGTopic] = useState("");
+  const [gBusy, setGBusy] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
-  // New Chat Modals
+  // New Chat Modals & Member Discovery
   const [showNewDmModal, setShowNewDmModal] = useState(false);
+  const [memberSearchQuery, setMemberSearchQuery] = useState("");
+  const [discoveredMembers, setDiscoveredMembers] = useState<ChatContact[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
   const [showNewGroupModal, setShowNewGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupTopic, setNewGroupTopic] = useState("");
+
+  // Groups: who to invite, the 3-dot menu, and the member list with admin controls.
+  const [groupPicks, setGroupPicks] = useState<ChatContact[]>([]);
+  const [pickQuery, setPickQuery] = useState("");
+  const [pickResults, setPickResults] = useState<ChatContact[]>([]);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const [showChatMenu, setShowChatMenu] = useState(false);
+  const [showGroupInfo, setShowGroupInfo] = useState(false);
+  const [groupInfo, setGroupInfo] = useState<GroupDetail | null>(null);
+  const [groupNotice, setGroupNotice] = useState<string | null>(null);
+  const [sideNotice, setSideNotice] = useState<string | null>(null);
+
+  // 1:1 details panel (3-dot menu > Contact info), the file being uploaded, and the message a
+  // quoted reply jumped to (briefly highlighted).
+  const [showContactInfo, setShowContactInfo] = useState(false);
+  const [upload, setUpload] = useState<{ filename: string; progress: number; error?: string } | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const askedForTopic = useRef("");
 
   // Mobile WhatsApp-style view toggle: show conversations list vs active chat room
   const [showMobileChat, setShowMobileChat] = useState(false);
 
   const channelRef = useRef<Channel | null>(null);
+  const sendMessageRef = useRef<(text: string, attachment?: ChatAttachment) => void>(() => { });
   const topicRef = useRef("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Reading position (WhatsApp-style history): open at the newest message, load older pages as the reader
+  // scrolls up without moving what they're looking at, and only follow new messages when already at the bottom.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+  const anchorRef = useRef<{ height: number; top: number } | null>(null); // measured just before older messages are added
+  const openedRef = useRef(""); // the conversation whose newest messages have been shown at the bottom
+  const loadingOlderRef = useRef(false);
+  const hasOlderRef = useRef(false);
+  const loadOlderRef = useRef<() => void>(() => { });
+  const [away, setAway] = useState(false); // scrolled up, away from the newest message
   const typingSentAt = useRef(0);
   const typingIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
 
-  // Fetch real registered users from DB
+  // Fetch active conversations from DB
   useEffect(() => {
     let active = true;
     fetchChatContacts()
       .then((realUsers) => {
         if (!active) return;
         setLoadingContacts(false);
-        if (!realUsers || realUsers.length === 0) return;
+        if (!realUsers || realUsers.length === 0) {
+          setContacts((prev) => prev.filter((c) => c.type === "group"));
+          return;
+        }
         const realContacts: ChatContact[] = realUsers.map((u) => ({
           id: u.id,
           name: u.name,
@@ -149,27 +338,272 @@ export function RealtimeChatView({ user }: { user: User }) {
           type: "direct",
           pairId: u.pairId,
           isOnline: false,
+          lastMessage: u.lastMessage,
+          lastMessageTime: u.lastMessageTime ? formatChatTime(u.lastMessageTime) : undefined,
+          lastTimestamp: toTimestamp(u.lastMessageTime),
+          unreadCount: u.unreadCount,
         }));
         setContacts((prev) => {
           const userGroups = prev.filter((c) => c.type === "group");
-          return [...realContacts, ...userGroups];
+          const combined = [...realContacts, ...userGroups];
+          return combined.sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
         });
-        setSelectedContact((prev) => prev || realContacts[0]);
+        setSelectedContact((prev) => {
+          if (prev) {
+            const found = realContacts.find((c) => c.id === prev.id);
+            return found && topicOf(found) === topicOf(prev) ? prev : (found || prev);
+          }
+          return realContacts[0] || null;
+        });
       })
       .catch((err) => {
         if (active) setLoadingContacts(false);
-        console.warn("[RealtimeChat] Could not load database contacts:", err);
+        console.warn("[RealtimeChat] Could not load active conversations:", err);
       });
     return () => {
       active = false;
     };
   }, []);
 
-  // Follow the newest message (not when older pages are prepended).
-  const newestKey = messages.at(-1)?.client_id;
+  // Search registered non-guest members when opening New DM modal
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [newestKey, typingUsers]);
+    if (!showNewDmModal) {
+      setMemberSearchQuery("");
+      setDiscoveredMembers([]);
+      return;
+    }
+    let active = true;
+    setLoadingMembers(true);
+    const timer = setTimeout(() => {
+      searchChatMembers(memberSearchQuery)
+        .then((members) => {
+          if (!active) return;
+          setLoadingMembers(false);
+          const mapped: ChatContact[] = (members || []).map((m) => ({
+            id: m.id,
+            name: m.name,
+            username: m.username,
+            role: m.role,
+            avatar: m.avatar || undefined,
+            type: "direct",
+            pairId: m.pairId,
+            isOnline: false,
+          }));
+          setDiscoveredMembers(mapped);
+        })
+        .catch(() => {
+          if (active) setLoadingMembers(false);
+        });
+    }, 150);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [showNewDmModal, memberSearchQuery]);
+
+  const handleSelectMember = (peer: ChatContact) => {
+    setContacts((prev) => {
+      const exists = prev.find((c) => c.id === peer.id);
+      if (exists) return prev;
+      return [{ ...peer, lastTimestamp: Date.now() }, ...prev];
+    });
+    setSelectedContact(peer);
+    setShowNewDmModal(false);
+    setShowMobileChat(true);
+  };
+
+  // Groups I belong to (accepted). Merged in next to the direct chats.
+  const mergeGroups = useCallback(() => {
+    return fetchChatGroups()
+      .then((groups) => {
+        const mapped = groups.map(groupToContact);
+        setContacts((prev) => {
+          const direct = prev.filter((c) => c.type !== "group");
+          const combined = [...direct, ...mapped];
+          return combined.sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
+        });
+      })
+      .catch(() => { });
+  }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    mergeGroups();
+  }, [mergeGroups]);
+
+  // Member picker (used when creating a group and when an admin adds people).
+  const pickerOpen = showNewGroupModal || (showGroupInfo && groupInfo?.my_role === "admin");
+  useEffect(() => {
+    if (!pickerOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPickResults([]);
+      return;
+    }
+    let active = true;
+    const t = setTimeout(() => {
+      searchChatMembers(pickQuery)
+        .then((r) => active && setPickResults(r.map(memberToContact)))
+        .catch(() => { });
+    }, 150);
+    return () => {
+      active = false;
+      clearTimeout(t);
+    };
+  }, [pickerOpen, pickQuery]);
+
+  const loadGroupInfo = useCallback((id: string) => {
+    return fetchGroupDetail(id)
+      .then((d) => {
+        setGroupInfo(d);
+        setGName(d.name);
+        setGTopic(d.topic ?? "");
+      })
+      .catch(() => setGroupInfo(null));
+  }, []);
+
+  const openGroupInfo = () => {
+    if (selectedContact?.type !== "group") return;
+    setShowChatMenu(false);
+    setGroupNotice(null);
+    setPickQuery("");
+    setGroupInfo(null);
+    setShowGroupInfo(true);
+    loadGroupInfo(selectedContact.id);
+  };
+
+  const closeGroupInfo = () => {
+    setShowGroupInfo(false);
+    setPickQuery("");
+  };
+
+  const groupAction = async (fn: () => Promise<unknown>, ok?: string) => {
+    if (!selectedContact) return;
+    try {
+      await fn();
+      setGroupNotice(ok ?? null);
+      await loadGroupInfo(selectedContact.id);
+      mergeGroups();
+    } catch (e) {
+      setGroupNotice(errText(e, "That did not work. Try again."));
+    }
+  };
+
+  const handleInviteToGroup = (peer: ChatContact) =>
+    selectedContact &&
+    groupAction(() => addGroupMembers(selectedContact.id, [peer.id]), `Invitation sent to ${peer.name}.`);
+  const handleRoleChange = (userId: string, role: "admin" | "member") =>
+    selectedContact && groupAction(() => setGroupMemberRole(selectedContact.id, userId, role));
+  const handleRemoveMember = (userId: string, name: string) => {
+    if (!selectedContact || !window.confirm(`Remove ${name} from this group?`)) return;
+    groupAction(() => removeGroupMember(selectedContact.id, userId));
+  };
+  // Group chats show each sender's profile picture beside their messages (like WhatsApp): the
+  // members' pictures, by user id, for the open group. Former members fall back to their initial.
+  const [roomAvatars, setRoomAvatars] = useState<Record<string, string | null>>({});
+  const loadRoomAvatars = useCallback((groupId: string) => {
+    fetchGroupDetail(groupId)
+      .then((d) => setRoomAvatars(Object.fromEntries(d.members.map((m) => [m.user_id, m.avatar ?? null]))))
+      .catch(() => { });
+  }, []);
+  const openGroupId = selectedContact?.type === "group" ? selectedContact.id : null;
+  useEffect(() => {
+    if (openGroupId) loadRoomAvatars(openGroupId);
+  }, [openGroupId, loadRoomAvatars]);
+
+  // Live group changes (someone joined/left/was removed, roles, an invite answered): refresh the list
+  // and the open member panel. Kept in a ref so the realtime subscriptions don't resubscribe.
+  const refreshGroupsRef = useRef<() => void>(() => { });
+  useEffect(() => {
+    refreshGroupsRef.current = () => {
+      mergeGroups();
+      if (selectedContact?.type === "group") loadRoomAvatars(selectedContact.id);
+      if (showGroupInfo && selectedContact?.type === "group") loadGroupInfo(selectedContact.id);
+    };
+  }, [mergeGroups, loadGroupInfo, loadRoomAvatars, showGroupInfo, selectedContact]);
+
+  // An admin removed me: the server already closed the room; drop it from the screen.
+  const removedFromGroup = useCallback((group: ChatContact) => {
+    setContacts((prev) => prev.filter((c) => c.id !== group.id));
+    setSelectedContact((prev) => (prev?.id === group.id ? null : prev));
+    setShowMobileChat(false);
+    setShowChatMenu(false);
+    setShowGroupInfo(false);
+    setSideNotice(`You were removed from "${group.name}".`);
+  }, []);
+
+  const handleLeaveGroup = async () => {
+    if (!selectedContact || !window.confirm(`Leave "${selectedContact.name}"?`)) return;
+    try {
+      await removeGroupMember(selectedContact.id, me);
+      setContacts((prev) => prev.filter((c) => c.id !== selectedContact.id));
+      setSelectedContact(null);
+      setShowMobileChat(false);
+      setShowChatMenu(false);
+      closeGroupInfo();
+    } catch (e) {
+      setGroupNotice(errText(e, "Could not leave the group."));
+    }
+  };
+
+  // Runs before the browser paints, so there is never a visible jump.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (anchorRef.current) {
+      // Older messages were added above: keep what the reader was looking at exactly where it was.
+      el.scrollTop = el.scrollHeight - anchorRef.current.height + anchorRef.current.top;
+      anchorRef.current = null;
+      return;
+    }
+    const topic = topicRef.current;
+    if (topic && openedRef.current !== topic && messages.some((m) => m.seq)) {
+      // First time this conversation shows its stored messages: open at the newest, instantly (no sweep from the top).
+      el.scrollTop = el.scrollHeight;
+      openedRef.current = topic;
+      nearBottomRef.current = true;
+    }
+  }, [messages]);
+
+  // A new message at the bottom: follow it when the reader is already there (or sent it), otherwise leave them reading.
+  const newestKey = messages.at(-1)?.client_id;
+  const newestIsMine = messages.at(-1)?.author_id === me;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !newestKey) return;
+    if (nearBottomRef.current || newestIsMine) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [newestKey, newestIsMine]);
+
+  // Someone typing shows under the last message: keep it in view only for a reader at the bottom.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && nearBottomRef.current) el.scrollTo({ top: el.scrollHeight });
+  }, [typingUsers]);
+
+  useEffect(() => {
+    hasOlderRef.current = hasOlder;
+  }, [hasOlder]);
+
+  // Stay pinned to the newest message while the reader is at the bottom and the box changes size
+  // (the keyboard opens, a banner appears, the composer grows): the layout settles after the first scroll.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (nearBottomRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [selectedContact?.id]);
+
+  const onStreamScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    nearBottomRef.current = fromBottom < 160;
+    setAway(fromBottom > 400);
+    // Near the top: bring in the next page of older messages.
+    if (el.scrollTop < 240) loadOlderRef.current();
+  };
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -197,21 +631,43 @@ export function RealtimeChatView({ user }: { user: User }) {
   useEffect(() => {
     let alive = true;
     let cleanup: (() => void) | undefined;
+    let syncTimer: ReturnType<typeof setInterval> | undefined;
+
     getPhoenixSocket(me)
       .then((s) => {
         if (!alive) return;
         setSocket(s);
-        setSocketConnected(s.isConnected());
+
+        const syncStatus = () => {
+          if (!alive) return;
+          const connected = s.isConnected();
+          setSocketConnected((prev) => (prev !== connected ? connected : prev));
+        };
+
+        syncStatus();
+
         const refs = [
-          s.onOpen(() => setSocketConnected(true)),
-          s.onError(() => setSocketConnected(false)),
-          s.onClose(() => setSocketConnected(false)),
+          s.onOpen(syncStatus),
+          s.onError(syncStatus),
+          s.onClose(syncStatus),
         ];
-        cleanup = () => s.off(refs);
+
+        // Periodically verify connection status so UI never gets stuck on "Connecting..."
+        syncTimer = setInterval(syncStatus, 1500);
+
+        cleanup = () => {
+          clearInterval(syncTimer);
+          s.off(refs);
+        };
       })
-      .catch(() => alive && setChatError("Chat is unavailable right now. Try reloading the page."));
+      .catch((err) => {
+        console.error("[RealtimeChat] Phoenix socket init failed:", err);
+        if (alive) setChatError("Chat is unavailable right now. Try reloading the page.");
+      });
+
     return () => {
       alive = false;
+      clearInterval(syncTimer);
       cleanup?.();
     };
   }, [me]);
@@ -220,10 +676,24 @@ export function RealtimeChatView({ user }: { user: User }) {
   useEffect(
     () =>
       subscribeInbox(me, {
-        onNotice: (msg) =>
-          setContacts((prev) =>
-            prev.map((c) => (topicOf(c) === msg.topic ? { ...c, lastMessage: msg.text, lastMessageTime: "Just now" } : c))
-          ),
+        onNotice: (msg) => {
+          const ts = toTimestamp(msg.timestamp) || Date.now();
+          setContacts((prev) => {
+            const existing = prev.find((c) => topicOf(c) === msg.topic);
+            if (existing) {
+              const updated: ChatContact = {
+                ...existing,
+                lastMessage: messagePreview(msg),
+                lastMessageTime: "Just now",
+                lastTimestamp: ts,
+                unreadCount: (existing.unreadCount || 0) + 1,
+              };
+              return [updated, ...prev.filter((c) => topicOf(c) !== msg.topic)];
+            }
+            return prev;
+          });
+        },
+        onGroupsChanged: () => refreshGroupsRef.current(),
       }),
     [me]
   );
@@ -233,12 +703,41 @@ export function RealtimeChatView({ user }: { user: User }) {
   const wantedTopic = useSearchParams().get("c");
   useEffect(() => {
     const target = wantedTopic && contacts.find((c) => topicOf(c) === wantedTopic);
-    if (!target) return;
+    if (!target) {
+      // Just accepted a group invite elsewhere: it is not in this list yet. Ask once.
+      if (wantedTopic?.startsWith("room:") && askedForTopic.current !== wantedTopic) {
+        askedForTopic.current = wantedTopic;
+        mergeGroups();
+      }
+      return;
+    }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedContact(target);
     setShowMobileChat(true);
     router.replace("/chat");
-  }, [wantedTopic, contacts, router]);
+  }, [wantedTopic, contacts, router, mergeGroups]);
+
+  // /chat?to=<username>: "Message" on someone's portfolio. Open the chat with them, starting a new one if needed.
+  const wantedUser = useSearchParams().get("to");
+  const openedUser = useRef("");
+  useEffect(() => {
+    if (!wantedUser || openedUser.current === wantedUser || loadingContacts) return;
+    openedUser.current = wantedUser;
+    searchChatMembers(wantedUser)
+      .then((found) => {
+        const m = found.find((x) => x.username.toLowerCase() === wantedUser.toLowerCase());
+        if (!m) {
+          setSideNotice("That person can't be messaged here.");
+          return;
+        }
+        const contact = { ...memberToContact(m), lastTimestamp: Date.now() };
+        setContacts((prev) => (prev.some((c) => c.id === contact.id) ? prev : [contact, ...prev]));
+        setSelectedContact((cur) => cur ?? contact);
+        setShowMobileChat(true);
+      })
+      .catch(() => setSideNotice("Couldn't open that chat."))
+      .finally(() => router.replace("/chat"));
+  }, [wantedUser, loadingContacts, router]);
 
   // Send (or resend) one message. Same client_id = stored once, so retrying is always safe.
   const deliver = useCallback((msg: ChatMessage) => {
@@ -250,14 +749,27 @@ export function RealtimeChatView({ user }: { user: User }) {
     mark("sending");
     sendChannelMessage(chan, msg)
       .then((stored) => topicRef.current === topic && setMessages((prev) => mergeMessages(prev, [stored])))
-      .catch(() => topicRef.current === topic && mark("failed"));
+      .catch((e) => {
+        if (topicRef.current !== topic) return;
+        // Refused for good (an account that is not activated used its free messages): not "tap to retry".
+        if (e instanceof Error && /activate your account|suspended/i.test(e.message)) {
+          setMessages((prev) => prev.filter((m) => !(m.client_id === msg.client_id && !m.seq)));
+          setChatError(e.message);
+        } else mark("failed");
+      });
   }, []);
 
   // Join the selected conversation
+  const selectedTopic = selectedContact ? topicOf(selectedContact) : "";
+  const selectedContactRef = useRef(selectedContact);
   useEffect(() => {
-    if (!socket || !selectedContact) return;
-    const topic = topicOf(selectedContact);
-    const isDirect = selectedContact.type === "direct";
+    selectedContactRef.current = selectedContact;
+  }, [selectedContact]);
+
+  useEffect(() => {
+    if (!socket || !selectedTopic) return;
+    const topic = selectedTopic;
+    const isDirect = selectedContactRef.current?.type === "direct";
     const live = () => topicRef.current === topic;
     let unseenUpTo = 0; // read receipt held back while the tab is hidden
     topicRef.current = topic;
@@ -289,20 +801,38 @@ export function RealtimeChatView({ user }: { user: User }) {
         if (gap || newest === 0) setHasOlder(page.has_more);
         markRead(page.messages);
         loadOutbox(topic).forEach(deliver); // anything unsent from before the (re)connect
+        if (pendingForwardRef.current) {
+          const toSend = pendingForwardRef.current;
+          pendingForwardRef.current = null;
+          sendMessageRef.current(toSend.text, toSend.attachment);
+        }
       },
       onMessage: (msg) => {
         if (!live()) return;
         setMessages((prev) => mergeMessages(prev, [msg]));
         markRead([msg]);
-        setContacts((prev) =>
-          prev.map((c) => (c.id === selectedContact.id ? { ...c, lastMessage: msg.text, lastMessageTime: "Just now" } : c))
-        );
+        if (!isDirect && isSystem(msg)) refreshGroupsRef.current(); // joined / left / roles changed
+        const ts = toTimestamp(msg.timestamp) || Date.now();
+        const contactId = selectedContactRef.current?.id;
+        if (contactId) {
+          setContacts((prev) => {
+            const current = prev.find((c) => c.id === contactId);
+            if (!current) return prev;
+            const updated: ChatContact = {
+              ...current,
+              lastMessage: previewOf(msg),
+              lastMessageTime: "Just now",
+              lastTimestamp: ts,
+            };
+            return [updated, ...prev.filter((c) => c.id !== contactId)];
+          });
+        }
       },
       onTyping: (e: TypingEvent) => {
         if (!live() || e.user_id === me) return;
         setTypingUsers((prev) => {
           const next = { ...prev };
-          if (e.is_typing) next[e.user_id] = { name: e.author_name, until: Date.now() + TYPING_SHOW_FOR };
+          if (e.is_typing) next[e.user_id] = { name: e.author_name, until: Date.now() + TYPING_SHOW_FOR, uploading: e.activity === "uploading" };
           else delete next[e.user_id];
           return next;
         });
@@ -316,8 +846,10 @@ export function RealtimeChatView({ user }: { user: User }) {
         ),
       onReaction: (r) =>
         live() && setMessages((prev) => prev.map((m) => (m.id === r.message_id ? withReaction(m, r.emoji, r.user_id, false) : m))),
-      onDeleted: ({ id }) => live() && setMessages((prev) => prev.filter((m) => m.id !== id)),
+      onDeleted: (m) => live() && setMessages((prev) => mergeMessages(prev, [m])),
+      onEdited: (m) => live() && setMessages((prev) => mergeMessages(prev, [m])),
       onJoinError: (reason) => live() && setChatError(`Can't open this chat: ${reason}`),
+      onRemoved: () => live() && selectedContactRef.current && removedFromGroup(selectedContactRef.current),
     });
     channelRef.current = chan;
 
@@ -334,7 +866,7 @@ export function RealtimeChatView({ user }: { user: User }) {
       setOpenTopic("");
       if (channelRef.current === chan) channelRef.current = null;
     };
-  }, [socket, selectedContact, me, deliver]);
+  }, [socket, selectedTopic, me, deliver, removedFromGroup]);
 
   const stopTyping = () => {
     if (typingIdleTimer.current) clearTimeout(typingIdleTimer.current);
@@ -355,110 +887,330 @@ export function RealtimeChatView({ user }: { user: User }) {
     typingIdleTimer.current = setTimeout(stopTyping, TYPING_IDLE);
   };
 
-  const handleSendMessage = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const text = inputText.trim();
-    if (!text) return;
-
+  /** Send text, a file with an optional caption, or both; quoting replyMessage if one is set. */
+  const sendMessage = (text: string, attachment?: ChatAttachment) => {
+    if (!text && !attachment) return;
     const clientId = newClientId();
     const msg: ChatMessage = {
       id: clientId,
       client_id: clientId,
       text,
+      attachment: attachment ?? null,
       author_id: me,
       author_name: user.fullname || "User",
       author_username: user.username || me,
       timestamp: new Date().toISOString(),
       status: "sending",
       reply_to: replyMessage
-        ? { id: replyMessage.id, text: replyMessage.text, author_name: replyMessage.author_name }
+        ? { id: replyMessage.id, text: previewOf(replyMessage).slice(0, 200), author_name: replyMessage.author_name, author_id: replyMessage.author_id }
         : undefined,
     };
 
     setMessages((prev) => [...prev, msg]);
-    setInputText("");
     setReplyMessage(null);
     setShowEmojiPicker(false);
     if (selectedContact) {
-      setContacts((prev) =>
-        prev.map((c) => (c.id === selectedContact.id ? { ...c, lastMessage: text, lastMessageTime: "Just now" } : c))
-      );
+      const ts = Date.now();
+      setContacts((prev) => {
+        const current = prev.find((c) => c.id === selectedContact.id);
+        if (!current) return prev;
+        const updated: ChatContact = {
+          ...current,
+          lastMessage: previewOf(msg),
+          lastMessageTime: "Just now",
+          lastTimestamp: ts,
+        };
+        return [updated, ...prev.filter((c) => c.id !== selectedContact.id)];
+      });
     }
     stopTyping();
     deliver(msg);
   };
+  sendMessageRef.current = sendMessage;
+
+  const handleSendMessage = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const text = inputText.trim();
+    if (!text) return;
+    setInputText("");
+    sendMessage(text);
+  };
+
+  // Paperclip: upload the file (others see "… is sending a file"), then send it, with whatever is
+  // typed as its caption. The upload is owned by me; the chat server only accepts my own files.
+  const handlePickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // picking the same file again still fires
+    if (!file || upload) return;
+    if (file.size > 10 * 1024 * 1024) {
+      setUpload({ filename: file.name, progress: 0, error: "Files can be up to 10 MB." });
+      return;
+    }
+    const chan = channelRef.current;
+    const ping = chan ? setInterval(() => sendChannelTyping(chan, true, "uploading"), TYPING_SEND_EVERY) : null;
+    if (chan) sendChannelTyping(chan, true, "uploading");
+    setUpload({ filename: file.name, progress: 0 });
+    try {
+      const att = await uploadChatAttachment(file, (p) => setUpload((u) => (u ? { ...u, progress: p } : u)));
+      const caption = inputText.trim();
+      setInputText("");
+      setUpload(null);
+      sendMessage(caption, att);
+    } catch (err) {
+      setUpload({ filename: file.name, progress: 0, error: errText(err, "Upload failed. Try again.") });
+    } finally {
+      if (ping) clearInterval(ping);
+      if (chan) sendChannelTyping(chan, false);
+    }
+  };
+
+  const startReply = (msg: ChatMessage) => {
+    setReplyMessage(msg);
+    inputRef.current?.focus();
+  };
+
+  // Tap a quoted reply (or a file in Contact info): scroll to the original and flash it.
+  // Load my pins whenever another chat is opened.
+  useEffect(() => {
+    if (!selectedContact) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPins([]);
+      return;
+    }
+    let live = true;
+    fetchPins(topicOf(selectedContact))
+      .then((p) => live && setPins(p))
+      .catch(() => live && setPins([]));
+    return () => {
+      live = false;
+    };
+  }, [selectedContact]);
+
+  const togglePin = async (msg: ChatMessage) => {
+    if (!selectedContact || !msg.seq) return;
+    const topic = topicOf(selectedContact);
+    try {
+      if (pinnedIds.has(msg.seq)) await unpinMessage(topic, msg.seq);
+      else await pinMessage(topic, msg.seq);
+      setPins(await fetchPins(topic));
+    } catch (e) {
+      setMsgNotice(errText(e, "Could not change the pin."));
+    }
+  };
+
+  /** Scroll to a pinned message; if it is older than what is loaded, say so. */
+  const jumpToPin = (pin: ChatPinItem) => {
+    const target = messagesRef.current.find((m) => m.seq === pin.message_id);
+    if (target) jumpToMessage(target.id);
+    else setMsgNotice("That message is further back. Scroll up to load earlier messages.");
+  };
+
+  const jumpToMessage = (id: string) => {
+    const el = document.getElementById(`msg-${id}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightId(id);
+    setTimeout(() => setHighlightId((h) => (h === id ? null : h)), 1600);
+  };
 
   const handleLoadOlder = async () => {
     const chan = channelRef.current;
-    const oldest = messages.find((m) => m.seq)?.seq;
-    if (!chan || !oldest) return;
+    const oldest = messagesRef.current.find((m) => m.seq)?.seq;
+    if (!chan || !oldest || loadingOlderRef.current || !hasOlderRef.current) return;
     const topic = topicRef.current;
+    loadingOlderRef.current = true;
     setLoadingOlder(true);
     try {
       const page = await loadOlder(chan, oldest);
       if (topicRef.current !== topic) return;
+      const el = scrollRef.current;
+      // Measured now, just before the older messages go in (the layout effect restores the position).
+      if (el && page.messages.length) anchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
       setMessages((prev) => mergeMessages(prev, page.messages));
       setHasOlder(page.has_more);
     } catch {
       setChatError("Couldn't load older messages. Try again.");
     } finally {
+      loadingOlderRef.current = false;
       setLoadingOlder(false);
     }
   };
+  useEffect(() => {
+    loadOlderRef.current = handleLoadOlder;
+  });
 
   const handleAddReaction = (messageId: string, emoji: string) => {
     setMessages((prev) => prev.map((m) => (m.id === messageId ? withReaction(m, emoji, me, true) : m)));
     if (channelRef.current) sendChannelReaction(channelRef.current, messageId, emoji);
   };
 
-  const handleCreateGroup = (e: React.FormEvent) => {
-    e.preventDefault();
-    // Room ids are [a-z0-9-]{1,64} (enforced by the chat server).
-    const slug = newGroupName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
-    if (!slug) return;
-
-    const newGroup: ChatContact = {
-      id: `group-${slug}`,
-      name: newGroupName.trim(),
-      username: slug,
-      role: newGroupTopic || "Community group",
-      type: "group",
-      roomId: slug,
-      lastMessage: "Group created. Start the real-time discussion!",
-      lastMessageTime: "Just now",
-      isOnline: true,
-    };
-
-    setContacts([newGroup, ...contacts.filter((c) => c.id !== newGroup.id)]);
-    setSelectedContact(newGroup);
-    setNewGroupName("");
-    setNewGroupTopic("");
-    setShowNewGroupModal(false);
+  const startEdit = (msg: ChatMessage) => {
+    setMenuMsgId(null);
+    setEditing({ id: msg.id, text: msg.text });
+  };
+  const saveEdit = async () => {
+    const chan = channelRef.current;
+    if (!editing || !chan) return;
+    const text = editing.text.trim();
+    const original = messagesRef.current.find((m) => m.id === editing.id);
+    if (!text || text === original?.text) {
+      setEditing(null);
+      return;
+    }
+    try {
+      const editId = original?.seq ? String(original.seq) : editing.id;
+      const saved = await sendEditMessage(chan, editId, text);
+      setMessages((prev) => mergeMessages(prev, [saved]));
+      setEditing(null);
+    } catch (e) {
+      setMsgNotice(errText(e, "Could not save the change."));
+    }
+  };
+  const handleForwardTo = (target: ChatContact) => {
+    if (!forwardingMsg) return;
+    const fMsg = forwardingMsg;
+    setForwardingMsg(null);
+    if (selectedContact && target.id === selectedContact.id) {
+      sendMessage(fMsg.text, fMsg.attachment ?? undefined);
+      setMsgNotice(`Forwarded to ${target.name}.`);
+      return;
+    }
+    pendingForwardRef.current = { text: fMsg.text, attachment: fMsg.attachment ?? undefined };
+    setSelectedContact(target);
     setShowMobileChat(true);
+    setMsgNotice(`Forwarded to ${target.name}.`);
+  };
+  const deleteMessage = async (msg: ChatMessage) => {
+    setMenuMsgId(null);
+    const chan = channelRef.current;
+    if (!chan || !window.confirm("Delete this message for everyone?")) return;
+    try {
+      const gone = await sendDeleteMessage(chan, msg.id);
+      setMessages((prev) => mergeMessages(prev, [gone]));
+    } catch (e) {
+      setMsgNotice(errText(e, "Could not delete the message."));
+    }
   };
 
-  // Filtered contacts
-  const filteredContacts = contacts.filter((c) => {
-    const matchTab =
-      activeTab === "all" ||
-      (activeTab === "direct" && c.type === "direct") ||
-      (activeTab === "group" && c.type === "group");
-    const q = searchQuery.toLowerCase();
-    const matchSearch =
-      !q ||
-      c.name.toLowerCase().includes(q) ||
-      c.role.toLowerCase().includes(q) ||
-      c.username.toLowerCase().includes(q);
-    return matchTab && matchSearch;
-  });
+  // "Delete chat": clears my copy of this conversation (1:1 or group); the others keep theirs.
+  const handleDeleteChat = async () => {
+    if (!selectedContact) return;
+    setShowChatMenu(false);
+    const what = selectedContact.type === "group" ? "this group's messages" : "this chat";
+    if (!window.confirm(`Delete ${what} for you? The other people keep their copy${selectedContact.type === "group" ? " and you stay in the group" : ""}.`)) return;
+    try {
+      await clearChat(topicOf(selectedContact));
+      setMessages([]);
+      setHasOlder(false);
+      setContacts((prev) =>
+        prev.map((c) => (c.id === selectedContact.id ? { ...c, lastMessage: undefined, lastMessageTime: undefined, lastTimestamp: 0, unreadCount: 0 } : c))
+      );
+    } catch (e) {
+      setMsgNotice(errText(e, "Could not delete the chat."));
+    }
+  };
+
+  // Group admin: rename, description, picture, delete the group for everyone.
+  const handleSaveGroupDetails = async () => {
+    if (!selectedContact || !groupInfo) return;
+    const name = gName.trim();
+    if (name.length < 2) {
+      setGroupNotice("The group needs a name.");
+      return;
+    }
+    setGBusy(true);
+    await groupAction(() => editChatGroup(selectedContact.id, { name, topic: gTopic.trim() }), "Saved.");
+    setGBusy(false);
+  };
+  const handleGroupPicture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !selectedContact) return;
+    setGBusy(true);
+    await groupAction(() => uploadGroupAvatar(selectedContact.id, file), "Group picture updated.");
+    setGBusy(false);
+  };
+  const handleRemoveGroupPicture = async () => {
+    if (!selectedContact) return;
+    setGBusy(true);
+    await groupAction(() => removeGroupAvatar(selectedContact.id), "Group picture removed.");
+    setGBusy(false);
+  };
+  const handleDeleteGroup = async () => {
+    if (!selectedContact || !window.confirm(`Delete "${selectedContact.name}" for everyone? Its messages are removed for all members.`)) return;
+    try {
+      await deleteChatGroup(selectedContact.id);
+      setContacts((prev) => prev.filter((c) => c.id !== selectedContact.id));
+      setSelectedContact(null);
+      setShowMobileChat(false);
+      setShowChatMenu(false);
+      closeGroupInfo();
+    } catch (e) {
+      setGroupNotice(errText(e, "Could not delete the group."));
+    }
+  };
+
+  const handleCreateGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newGroupName.trim();
+    if (name.length < 2 || creatingGroup) return;
+    setCreatingGroup(true);
+    setGroupError(null);
+    try {
+      // The server makes me the admin and sends each picked member an invitation to accept or decline.
+      const created = await createChatGroup(name, newGroupTopic.trim(), groupPicks.map((p) => p.id));
+      const group = groupToContact(created);
+      setContacts((prev) => [group, ...prev.filter((c) => c.id !== group.id)]);
+      setSelectedContact(group);
+      setNewGroupName("");
+      setNewGroupTopic("");
+      setGroupPicks([]);
+      setPickQuery("");
+      setShowNewGroupModal(false);
+      setShowMobileChat(true);
+    } catch (err) {
+      setGroupError(errText(err, "Could not create the group. Try again."));
+    } finally {
+      setCreatingGroup(false);
+    }
+  };
+
+  const togglePick = (peer: ChatContact) =>
+    setGroupPicks((prev) => (prev.some((p) => p.id === peer.id) ? prev.filter((p) => p.id !== peer.id) : [...prev, peer]));
+
+  // Filtered and sorted contacts (most recent message on top, like a real chat app)
+  const filteredContacts = contacts
+    .filter((c) => {
+      const matchTab =
+        activeTab === "all" ||
+        (activeTab === "direct" && c.type === "direct") ||
+        (activeTab === "group" && c.type === "group");
+      const q = searchQuery.toLowerCase();
+      const matchSearch =
+        !q ||
+        c.name.toLowerCase().includes(q) ||
+        c.role.toLowerCase().includes(q) ||
+        c.username.toLowerCase().includes(q);
+      return matchTab && matchSearch;
+    })
+    .sort((a, b) => {
+      const tA = a.lastTimestamp ?? (a.lastMessageTime ? 1 : 0);
+      const tB = b.lastTimestamp ?? (b.lastMessageTime ? 1 : 0);
+      if (tB !== tA) return tB - tA;
+      return a.name.localeCompare(b.name);
+    });
 
   // Someone typing to me in a chat that isn't open (the inbox drops stale entries every second).
   const typingTo = (c: ChatContact) => !!inbox?.typing[topicOf(c)];
   const typingNames = Object.values(typingUsers).map((t) => t.name);
   const isCurrentTyping = typingNames.length > 0;
-  const typingLabel = `${typingNames.join(", ")} ${typingNames.length > 1 ? "are" : "is"} typing…`;
+  const sendingFile = Object.values(typingUsers).some((t) => t.uploading);
+  const typingLabel = `${typingNames.join(", ")} ${typingNames.length > 1 ? "are" : "is"} ${sendingFile ? "sending a file…" : "typing…"}`;
   const peerOnline =
     selectedContact?.type === "direct" ? onlineIds.has(selectedContact.id) : (selectedContact ? onlineUsers.length > 1 : false);
+  // The open chat as the (live-refreshed) list knows it: member count and my role stay current
+  // without swapping selectedContact, which would rejoin the conversation.
+  const liveSelected = selectedContact ? (contacts.find((c) => c.id === selectedContact.id) ?? selectedContact) : null;
 
   return (
     <div className="w-full h-[calc(100dvh-125px)] sm:h-[calc(100vh-140px)] sm:min-h-[580px] rounded-none sm:rounded-3xl border-0 sm:border border-hairline bg-paper sm:shadow-2xl flex overflow-hidden">
@@ -473,9 +1225,11 @@ export function RealtimeChatView({ user }: { user: User }) {
         <div className="p-4 border-b border-hairline bg-paper-dim/40 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="relative">
-              <div className="w-10 h-10 rounded-full bg-ink text-paper font-bold flex items-center justify-center text-sm shadow-sm">
-                {(user.profile?.display_name || user.username || "P")[0].toUpperCase()}
-              </div>
+              <UserAvatar
+                name={user.profile?.display_name || user.username || "P"}
+                src={user.profile?.avatar_url}
+                className="w-10 h-10 rounded-full text-sm shadow-sm"
+              />
               <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 border-2 border-paper" />
             </div>
             <div>
@@ -488,7 +1242,7 @@ export function RealtimeChatView({ user }: { user: User }) {
                     }`}
                 />
                 <span className="text-[11px] font-semibold text-slate">
-                  {socketConnected ? "Elixir Phoenix Live" : "Connecting..."}
+                  {socketConnected ? "online" : "Connecting..."}
                 </span>
               </div>
             </div>
@@ -536,8 +1290,8 @@ export function RealtimeChatView({ user }: { user: User }) {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as typeof activeTab)}
                 className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${activeTab === tab.id
-                    ? "bg-ink text-paper"
-                    : "bg-paper-dim text-slate hover:text-ink"
+                  ? "bg-ink text-paper"
+                  : "bg-paper-dim text-slate hover:text-ink"
                   }`}
               >
                 {tab.label}
@@ -545,6 +1299,15 @@ export function RealtimeChatView({ user }: { user: User }) {
             ))}
           </div>
         </div>
+
+        {sideNotice && (
+          <div role="status" className="mx-3 mt-3 flex items-start gap-2 rounded-xl border border-hairline bg-paper-dim px-3 py-2 text-xs font-semibold text-ink-700">
+            <span className="flex-1">{sideNotice}</span>
+            <button type="button" onClick={() => setSideNotice(null)} aria-label="Dismiss" className="cursor-pointer text-slate hover:text-ink">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Conversation List */}
         <div className="flex-1 overflow-y-auto divide-y divide-hairline/40">
@@ -561,11 +1324,38 @@ export function RealtimeChatView({ user }: { user: User }) {
               ))}
             </div>
           ) : filteredContacts.length === 0 ? (
-            <div className="p-6 text-center text-slate">
-              <UserIcon className="w-8 h-8 mx-auto mb-2 opacity-40" />
-              <p className="text-xs font-semibold">No registered members found</p>
-              <p className="text-[11px] text-slate mt-0.5">Invite peers to start chatting.</p>
-            </div>
+            searchQuery.trim() ? (
+              <div className="p-6 text-center text-slate">
+                <Search className="w-8 h-8 mx-auto mb-2 opacity-30 text-ink" />
+                <p className="text-xs font-bold text-ink-900">No chats found</p>
+                <p className="text-[11px] text-slate mt-1 mb-4">No active conversations match &quot;{searchQuery}&quot;.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMemberSearchQuery(searchQuery);
+                    setShowNewDmModal(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-ink text-paper text-xs font-semibold cursor-pointer hover:opacity-90"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Search All Members</span>
+                </button>
+              </div>
+            ) : (
+              <div className="p-6 text-center text-slate">
+                <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-30 text-ink" />
+                <p className="text-xs font-bold text-ink-900">No conversations yet</p>
+                <p className="text-[11px] text-slate mt-1 mb-4">Start chatting with verified members and peers.</p>
+                <button
+                  type="button"
+                  onClick={() => setShowNewDmModal(true)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-ink text-paper text-xs font-semibold cursor-pointer hover:opacity-90"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New Conversation</span>
+                </button>
+              </div>
+            )
           ) : (
             filteredContacts.map((contact) => {
               const isSelected = selectedContact?.id === contact.id;
@@ -577,23 +1367,18 @@ export function RealtimeChatView({ user }: { user: User }) {
                     setShowMobileChat(true);
                   }}
                   className={`w-full p-3.5 flex items-start gap-3 text-left transition-all cursor-pointer ${isSelected
-                      ? "bg-blue-50/70 dark:bg-blue-950/20 border-l-4 border-blue-600"
-                      : "hover:bg-paper-dim/60"
+                    ? "bg-blue-50/70 dark:bg-blue-950/20 border-l-4 border-blue-600"
+                    : "hover:bg-paper-dim/60"
                     }`}
                 >
                   <div className="relative shrink-0">
-                    <div
-                      className={`w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-sm shadow-xs ${contact.type === "group"
-                          ? "bg-purple-500/10 text-purple-600 border border-purple-500/20"
-                          : "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-                        }`}
-                    >
-                      {contact.type === "group" ? (
+                    {contact.type === "group" ? (
+                      <div className="w-11 h-11 rounded-2xl flex items-center justify-center shadow-xs bg-purple-500/10 text-purple-600 border border-purple-500/20">
                         <Users className="w-5 h-5" />
-                      ) : (
-                        contact.name.charAt(0).toUpperCase()
-                      )}
-                    </div>
+                      </div>
+                    ) : (
+                      <UserAvatar name={contact.name} src={contact.avatar} className="w-11 h-11 rounded-2xl text-sm shadow-xs" />
+                    )}
                     {(contact.type === "direct" ? onlineIds.has(contact.id) : contact.isOnline) && (
                       <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 border-2 border-paper" />
                     )}
@@ -638,19 +1423,27 @@ export function RealtimeChatView({ user }: { user: User }) {
           ======================================================== */}
       <div
         className={`bg-paper flex-col ${showMobileChat
-            ? "fixed inset-0 z-50 flex h-[100dvh] md:relative md:inset-auto md:z-auto md:h-auto md:flex-1 md:flex overflow-hidden"
-            : "hidden md:flex md:flex-1 relative overflow-hidden"
+          ? "fixed inset-0 z-50 flex h-[100dvh] md:relative md:inset-auto md:z-auto md:h-auto md:flex-1 md:flex overflow-hidden"
+          : "hidden md:flex md:flex-1 relative overflow-hidden"
           }`}
       >
         {!selectedContact ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-radial from-paper-dim/60 to-paper-dim/20">
-            <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center mb-4">
+            <div className="w-16 h-16 rounded-3xl bg-blue-500/10 text-blue-600 flex items-center justify-center mb-4 shadow-xs">
               <MessageSquare className="w-8 h-8" />
             </div>
-            <h3 className="text-base font-bold text-ink-900 mb-1">Direct Real-Time Chat</h3>
-            <p className="text-xs text-slate max-w-sm">
-              Select any registered member from the database to start a live encrypted conversation.
+            <h3 className="text-base font-bold text-ink-900 mb-1">Your Direct Messages</h3>
+            <p className="text-xs text-slate max-w-sm mb-5">
+              Send private, end-to-end synchronized messages to peers and collaborators across Proofolio.
             </p>
+            <button
+              type="button"
+              onClick={() => setShowNewDmModal(true)}
+              className="px-4 py-2 rounded-xl bg-ink text-paper text-xs font-semibold hover:opacity-90 transition-opacity flex items-center gap-2 cursor-pointer shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Start New Conversation</span>
+            </button>
           </div>
         ) : (
           <>
@@ -667,27 +1460,27 @@ export function RealtimeChatView({ user }: { user: User }) {
                 >
                   <ArrowLeft className="w-5 h-5 text-ink-900" />
                 </button>
-                <div className="relative">
-                  <div
-                    className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-sm shadow-xs ${selectedContact.type === "group"
-                        ? "bg-purple-500/10 text-purple-600 border border-purple-500/20"
-                        : "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-                      }`}
-                  >
-                    {selectedContact.type === "group" ? (
+                <button
+                  type="button"
+                  onClick={() => (selectedContact.type === "group" ? openGroupInfo() : setShowContactInfo(true))}
+                  title={selectedContact.type === "group" ? "Group members" : "Contact info"}
+                  className="relative cursor-pointer"
+                >
+                  {selectedContact.type === "group" && !liveSelected?.avatar ? (
+                    <div className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-xs bg-purple-500/10 text-purple-600 border border-purple-500/20">
                       <Users className="w-5 h-5" />
-                    ) : (
-                      selectedContact.name.charAt(0).toUpperCase()
-                    )}
-                  </div>
+                    </div>
+                  ) : (
+                    <UserAvatar name={liveSelected?.name ?? selectedContact.name} src={liveSelected?.avatar ?? selectedContact.avatar} className="w-10 h-10 rounded-2xl text-sm shadow-xs" />
+                  )}
                   {peerOnline && (
                     <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-paper" />
                   )}
-                </div>
+                </button>
 
                 <div className="min-w-0">
                   <h3 className="text-sm font-bold text-ink-900 truncate flex items-center gap-2">
-                    {selectedContact.name}
+                    {liveSelected?.name ?? selectedContact.name}
                     {selectedContact.type === "group" && (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-600 border border-purple-500/20">
                         Group Channel
@@ -714,31 +1507,121 @@ export function RealtimeChatView({ user }: { user: User }) {
               </div>
 
               <div className="flex items-center gap-2 text-slate">
-                <button
-                  onClick={() => alert("Audio call feature connecting via WebRTC...")}
-                  title="Voice Call"
-                  className="p-2 rounded-xl hover:bg-paper-dim hover:text-ink transition-colors cursor-pointer"
-                >
-                  <Phone className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => alert("Video call feature connecting via WebRTC...")}
-                  title="Video Call"
-                  className="p-2 rounded-xl hover:bg-paper-dim hover:text-ink transition-colors cursor-pointer"
-                >
-                  <Video className="w-4 h-4" />
-                </button>
-                <button
-                  title="More Options"
-                  className="p-2 rounded-xl hover:bg-paper-dim hover:text-ink transition-colors cursor-pointer"
-                >
-                  <MoreVertical className="w-4 h-4" />
-                </button>
+                {/* 1:1 calls only: group calls would need a media server (SFU) rather than peer-to-peer. */}
+                {selectedContact.type === "direct" &&
+                  (["audio", "video"] as const).map((media) => (
+                    <button
+                      key={media}
+                      onClick={() => startCall({ id: selectedContact.id, name: selectedContact.name, username: selectedContact.username }, media)}
+                      disabled={inCall}
+                      title={inCall ? "You're already in a call" : media === "audio" ? "Voice call" : "Video call"}
+                      aria-label={media === "audio" ? "Voice call" : "Video call"}
+                      className="p-2 rounded-xl hover:bg-paper-dim hover:text-ink transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {media === "audio" ? <Phone className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+                    </button>
+                  ))}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowChatMenu((v) => !v)}
+                    title="More options"
+                    aria-label="More options"
+                    aria-expanded={showChatMenu}
+                    className="p-2 rounded-xl hover:bg-paper-dim hover:text-ink transition-colors cursor-pointer"
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </button>
+                  {showChatMenu && (
+                    <>
+                      <div className="fixed inset-0 z-20" onClick={() => setShowChatMenu(false)} />
+                      <div
+                        role="menu"
+                        className="absolute right-0 top-11 z-30 w-56 overflow-hidden rounded-xl border border-hairline bg-paper py-1 shadow-xl animate-in fade-in zoom-in-95 duration-100"
+                      >
+                        {selectedContact.type === "group" ? (
+                          <>
+                            <MenuItem icon={Users} onClick={openGroupInfo}>
+                              Members{liveSelected?.membersCount ? ` (${liveSelected.membersCount})` : ""}
+                            </MenuItem>
+                            {liveSelected?.myRole === "admin" && (
+                              <MenuItem icon={UserPlus} onClick={openGroupInfo}>
+                                Add members
+                              </MenuItem>
+                            )}
+                            <MenuItem icon={LogOut} danger onClick={handleLeaveGroup}>
+                              Leave group
+                            </MenuItem>
+                            <MenuItem icon={Trash2} danger onClick={handleDeleteChat}>
+                              Delete chat
+                            </MenuItem>
+                          </>
+                        ) : (
+                          <>
+                            <MenuItem
+                              icon={Info}
+                              onClick={() => {
+                                setShowChatMenu(false);
+                                setShowContactInfo(true);
+                              }}
+                            >
+                              Contact info & shared files
+                            </MenuItem>
+                            <MenuItem
+                              icon={UserIcon}
+                              onClick={() => {
+                                setShowChatMenu(false);
+                                router.push(`/u/${selectedContact.username}`);
+                              }}
+                            >
+                              View full profile
+                            </MenuItem>
+                            <MenuItem icon={Trash2} danger onClick={handleDeleteChat}>
+                              Delete chat
+                            </MenuItem>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
             {/* Messages Stream (WhatsApp Wallpaper Background) */}
-            <div className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-4 bg-radial from-paper-dim/60 to-paper-dim/20">
+            {pins.length > 0 && (
+              <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-paper px-3 py-1.5 text-xs sm:px-5">
+                <Pin className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                <button type="button" onClick={() => jumpToPin(pins[0])} className="min-w-0 flex-1 cursor-pointer text-left" title="Show the pinned message">
+                  <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                    Pinned{pins.length > 1 ? ` (${pins.length})` : ""} · {pins[0].author_name}
+                  </span>
+                  <span className="block truncate text-slate">
+                    {pins[0].deleted ? "This message was deleted" : pins[0].text || (pins[0].has_file ? "📎 File" : "")}
+                  </span>
+                </button>
+                {pins.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setPins((p) => [...p.slice(1), p[0]])}
+                    className="shrink-0 cursor-pointer rounded-md px-2 py-1 font-semibold text-slate hover:bg-paper-dim hover:text-ink-800"
+                    title="Next pinned message"
+                  >
+                    Next
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { void unpinMessage(topicOf(selectedContact), pins[0].message_id).then(() => fetchPins(topicOf(selectedContact))).then(setPins).catch(() => { }); }}
+                  aria-label="Unpin"
+                  title="Unpin"
+                  className="shrink-0 cursor-pointer rounded-md p-1 text-slate hover:bg-paper-dim hover:text-ink-800"
+                >
+                  <PinOff className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+            <div ref={scrollRef} onScroll={onStreamScroll} onLoadCapture={() => nearBottomRef.current && scrollRef.current && (scrollRef.current.scrollTop = scrollRef.current.scrollHeight)} style={{ overflowAnchor: "none" }} className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-4 bg-radial from-paper-dim/60 to-paper-dim/20">
               {/* Channel Banner */}
               <div className="text-center my-3">
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold bg-paper border border-hairline text-slate shadow-2xs">
@@ -753,63 +1636,227 @@ export function RealtimeChatView({ user }: { user: User }) {
                 </div>
               )}
 
-              {hasOlder && (
-            <div className="text-center">
-              <button
-                type="button"
-                onClick={handleLoadOlder}
-                disabled={loadingOlder}
-                className="px-3 py-1.5 rounded-full text-[11px] font-semibold border border-hairline bg-paper text-slate hover:text-ink disabled:opacity-50 cursor-pointer"
-              >
-                {loadingOlder ? "Loading…" : "Load older messages"}
-              </button>
-            </div>
-          )}
+              {msgNotice && (
+                <button
+                  type="button"
+                  onClick={() => setMsgNotice(null)}
+                  role="alert"
+                  className="mx-auto block max-w-md rounded-xl border border-berry/30 bg-berry/10 px-3 py-2 text-center text-xs font-semibold text-berry cursor-pointer"
+                >
+                  {msgNotice}
+                </button>
+              )}
 
-          {messages.map((msg) => {
+              {hasOlder && (
+                <div className="text-center">
+                  <button
+                    type="button"
+                    onClick={handleLoadOlder}
+                    disabled={loadingOlder}
+                    className="px-3 py-1.5 rounded-full text-[11px] font-semibold border border-hairline bg-paper text-slate hover:text-ink disabled:opacity-50 cursor-pointer"
+                  >
+                    {loadingOlder ? "Loading earlier messages…" : "Load older messages"}
+                  </button>
+                </div>
+              )}
+
+              {messages.map((msg, i) => {
                 const isMe = msg.author_id === me;
+                // Groups, others' messages: picture + name on the first of a run from the same person.
+                const prev = messages[i - 1];
+                const groupOther = !isMe && selectedContact.type === "group";
+                const firstOfRun = !prev || prev.author_id !== msg.author_id || isSystem(prev);
+                const gone = !!msg.deleted_at;
+                const isEditing = editing?.id === msg.id;
+                const canEdit = isMe && !gone && !!msg.text;
+                const canDelete = !gone && (isMe || (selectedContact.type === "group" && liveSelected?.myRole === "admin"));
+                if (isSystem(msg)) {
+                  return (
+                    <div key={msg.client_id || msg.id} className="flex justify-center">
+                      <span className="max-w-[85%] rounded-full border border-hairline bg-paper px-3 py-1 text-center text-[11px] font-semibold text-slate shadow-2xs">
+                        {msg.text}
+                      </span>
+                    </div>
+                  );
+                }
                 return (
                   <div
                     key={msg.client_id || msg.id}
-                    className={`flex flex-col group ${isMe ? "items-end" : "items-start"}`}
+                    id={`msg-${msg.id}`}
+                    className={`relative flex flex-col group rounded-2xl transition-colors duration-500 ${isMe ? "items-end" : "items-start"} ${groupOther ? "pl-9" : ""
+                      } ${groupOther && !firstOfRun ? "-mt-2.5" : ""} ${highlightId === msg.id ? "bg-amber-300/25" : ""}`}
                   >
-                    {/* Author Name in Groups */}
-                    {!isMe && selectedContact.type === "group" && (
-                      <span className="text-[10px] font-bold text-slate ml-3 mb-1">
-                        {msg.author_name}
-                      </span>
+                    {/* Groups: sender's picture and name, once per run of their messages */}
+                    {groupOther && firstOfRun && (
+                      <>
+                        <span className="absolute left-0 top-0" title={`${msg.author_name} (@${msg.author_username})`}>
+                          <UserAvatar name={msg.author_name} src={roomAvatars[msg.author_id]} className="w-7 h-7 rounded-full text-[11px]" />
+                        </span>
+                        <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 ml-1 mb-1">
+                          {msg.author_name}
+                        </span>
+                      </>
                     )}
 
                     <div className="relative max-w-[85%] sm:max-w-[70%]">
-                      {/* Replied Snippet */}
-                      {msg.reply_to && (
-                        <div
-                          className={`text-xs p-2 mb-1 rounded-xl border border-hairline/60 ${isMe ? "bg-white/10 text-paper/80" : "bg-paper-dim text-slate"
-                            }`}
-                        >
-                          <span className="font-bold block text-[10px]">
-                            {msg.reply_to.author_name}
-                          </span>
-                          <p className="truncate line-clamp-1">{msg.reply_to.text}</p>
-                        </div>
-                      )}
-
                       {/* Message Bubble */}
                       <div
-                        className={`p-3.5 rounded-2xl shadow-xs transition-all relative ${isMe
-                            ? "bg-emerald-600 text-white rounded-br-xs"
-                            : "bg-paper text-ink-900 border border-hairline rounded-bl-xs"
+                        className={`group/bubble p-3.5 rounded-2xl shadow-xs transition-all relative ${isMe
+                          ? "bg-emerald-600 text-white rounded-br-xs"
+                          : "bg-paper text-ink-900 border border-hairline rounded-bl-xs"
                           }`}
                       >
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap font-medium">
-                          {msg.text}
-                        </p>
+                        {/* WhatsApp-style options: an arrow in the bubble's corner (on hover with a mouse, always on touch) */}
+                        {!gone && !isEditing && (
+                          <div className="absolute right-1 top-1 z-10">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                // Opens on whichever side of the arrow has more room (up near the bottom, like WhatsApp), lined up with
+                                // the bubble's own edge: my messages on the right, theirs on the left. It is capped to the room it has and scrolls.
+                                const r = e.currentTarget.getBoundingClientRect();
+                                const below = window.innerHeight - r.bottom - 12;
+                                const above = r.top - 12;
+                                const up = below < 340 && above > below;
+                                setMenuPos({
+                                  position: "fixed",
+                                  maxHeight: Math.max(160, Math.min(380, up ? above : below)),
+                                  ...(up ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }),
+                                  ...(isMe
+                                    ? { right: Math.max(8, window.innerWidth - r.right) }
+                                    : { left: Math.max(8, Math.min((e.currentTarget.parentElement?.parentElement ?? e.currentTarget).getBoundingClientRect().left, window.innerWidth - 200)) }),
+                                });
+                                setMenuMsgId(menuMsgId === msg.id ? null : msg.id);
+                              }}
+                              aria-label="Message options"
+                              aria-haspopup="menu"
+                              aria-expanded={menuMsgId === msg.id}
+                              className={`flex h-6 w-7 items-center justify-end rounded-tr-xl pr-0.5 cursor-pointer transition-opacity ${menuMsgId === msg.id ? "opacity-100" : "opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/bubble:opacity-100 focus-visible:opacity-100"
+                                } ${isMe
+                                  ? "bg-gradient-to-l from-emerald-600 from-60% to-transparent text-emerald-100 hover:text-white"
+                                  : "bg-gradient-to-l from-paper from-60% to-transparent text-slate hover:text-ink"
+                                }`}
+                            >
+                              <ChevronDown className="w-4 h-4" />
+                            </button>
+                            {menuMsgId === msg.id && (
+                              <>
+                                <div className="fixed inset-0 z-20" onClick={() => setMenuMsgId(null)} />
+                                <div
+                                  role="menu"
+                                  style={menuPos}
+                                  className="z-40 w-48 overflow-y-auto overscroll-contain rounded-xl border border-hairline bg-paper py-1.5 text-ink-800 shadow-xl"
+                                >
+                                  <MenuItem icon={Reply} onClick={() => { setMenuMsgId(null); startReply(msg); }}>
+                                    Reply
+                                  </MenuItem>
+                                  {msg.text && (
+                                    <MenuItem icon={Copy} onClick={() => { setMenuMsgId(null); navigator.clipboard?.writeText(msg.text).catch(() => { }); }}>
+                                      Copy
+                                    </MenuItem>
+                                  )}
+                                  {!!msg.seq && (
+                                    <MenuItem icon={SmilePlus} onClick={() => { setMenuMsgId(null); setReactPickerId(msg.id); }}>
+                                      React
+                                    </MenuItem>
+                                  )}
+                                  <MenuItem icon={Forward} onClick={() => { setMenuMsgId(null); setForwardingMsg(msg); }}>
+                                    Forward
+                                  </MenuItem>
+                                  {canEdit && (
+                                    <MenuItem icon={Pencil} onClick={() => { setMenuMsgId(null); startEdit(msg); }}>
+                                      Edit
+                                    </MenuItem>
+                                  )}
+                                  <MenuItem icon={Info} onClick={() => { setMenuMsgId(null); setInfoMsg(msg); }}>
+                                    Message info
+                                  </MenuItem>
+                                  {!!msg.seq && (
+                                    <MenuItem icon={pinnedIds.has(msg.seq) ? PinOff : Pin} onClick={() => { setMenuMsgId(null); void togglePin(msg); }}>
+                                      {pinnedIds.has(msg.seq) ? "Unpin" : "Pin"}
+                                    </MenuItem>
+                                  )}
+                                  {canDelete && (
+                                    <MenuItem icon={Trash2} danger onClick={() => { setMenuMsgId(null); deleteMessage(msg); }}>
+                                      Delete
+                                    </MenuItem>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        {/* The message this one replies to: tap to jump to it */}
+                        {msg.reply_to && (
+                          <button
+                            type="button"
+                            onClick={() => jumpToMessage(msg.reply_to!.id)}
+                            title="Show the original message"
+                            className={`block w-full text-left text-xs px-2.5 py-1.5 mb-2 rounded-lg border-l-4 cursor-pointer ${isMe ? "bg-white/15 border-white/70 text-emerald-50" : "bg-paper-dim border-emerald-500 text-slate"
+                              }`}
+                          >
+                            <span className={`font-bold block text-[11px] ${isMe ? "text-white" : "text-emerald-700 dark:text-emerald-400"}`}>
+                              {msg.reply_to.author_id === me ? "You" : msg.reply_to.author_name}
+                            </span>
+                            <span className="line-clamp-2 break-words">{msg.reply_to.text}</span>
+                          </button>
+                        )}
+
+                        {gone ? (
+                          <p className="text-sm italic flex items-center gap-1.5 opacity-80">
+                            <Ban className="w-3.5 h-3.5 shrink-0" /> This message was deleted
+                          </p>
+                        ) : (
+                          <>
+                            {msg.attachment && <AttachmentView att={msg.attachment} mine={isMe} />}
+
+                            {isEditing ? (
+                              <div className="flex flex-col gap-2 min-w-[14rem] sm:min-w-[18rem]">
+                                <textarea
+                                  autoFocus
+                                  rows={Math.min(6, Math.max(2, (editing.text.split("\n").length || 1)))}
+                                  value={editing.text}
+                                  onChange={(e) => setEditing({ id: msg.id, text: e.target.value })}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" && !e.shiftKey) {
+                                      e.preventDefault();
+                                      saveEdit();
+                                    } else if (e.key === "Escape") setEditing(null);
+                                  }}
+                                  maxLength={4000}
+                                  aria-label="Edit message"
+                                  className="w-full resize-none rounded-xl border border-hairline bg-paper px-3 py-2 text-sm font-medium text-emerald-700 font-bold caret-emerald-600 shadow-inner focus:outline-none focus:ring-2 focus:ring-emerald-300 placeholder:text-slate"
+                                />
+                                <div className="flex items-center justify-between text-[11px] font-bold">
+                                  <span className="text-[10px] text-white/70 dark:text-zinc-400">Esc to cancel • Enter to save</span>
+                                  <div className="flex gap-1.5">
+                                    <button type="button" onClick={() => setEditing(null)} className="px-2.5 py-1 rounded-md bg-white/20 hover:bg-white/30 text-white cursor-pointer transition">
+                                      Cancel
+                                    </button>
+                                    <button type="button" onClick={saveEdit} className="px-3 py-1 rounded-md bg-white text-emerald-700 hover:bg-emerald-50 shadow-xs cursor-pointer font-semibold transition">
+                                      Save
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              msg.text && (
+                                <p className="text-sm leading-relaxed whitespace-pre-wrap break-words font-medium">
+                                  {msg.text}
+                                </p>
+                              )
+                            )}
+                          </>
+                        )}
 
                         {/* Metadata & Status Ticks */}
                         <div
                           className={`flex items-center justify-end gap-1.5 mt-1 text-[10px] ${isMe ? "text-emerald-100" : "text-slate"
                             }`}
                         >
+                          {!!msg.seq && pinnedIds.has(msg.seq) && !gone && <Pin className="w-3 h-3" aria-label="Pinned" />}
+                          {msg.edited_at && !gone && <span className="italic">edited</span>}
                           <span>
                             {new Date(msg.timestamp).toLocaleTimeString([], {
                               hour: "2-digit",
@@ -843,7 +1890,7 @@ export function RealtimeChatView({ user }: { user: User }) {
                       )}
 
                       {/* Reactions Badge */}
-                      {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                      {!gone && msg.reactions && Object.keys(msg.reactions).length > 0 && (
                         <div className="flex gap-1 mt-1 -mb-2 z-10 relative">
                           {Object.entries(msg.reactions).map(([emoji, users]) =>
                             users.length > 0 ? (
@@ -862,34 +1909,80 @@ export function RealtimeChatView({ user }: { user: User }) {
                       )}
 
                       {/* Quick Reaction Hover Menu */}
-                      <div
-                        className={`absolute -top-7 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 p-1 rounded-full bg-paper border border-hairline shadow-md z-20 ${isMe ? "right-0" : "left-0"
-                          }`}
-                      >
-                        {["❤️", "👍", "🔥", "😂"].map((emoji) => (
-                          <button
-                            key={emoji}
-                            type="button"
-                            onClick={() => handleAddReaction(msg.id, emoji)}
-                            className="w-6 h-6 hover:scale-125 transition-transform text-xs flex items-center justify-center cursor-pointer"
-                          >
-                            {emoji}
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => setReplyMessage(msg)}
-                          className="px-1.5 py-0.5 text-[10px] font-bold text-slate hover:text-ink cursor-pointer"
+                      {!gone && !!msg.seq && (
+                        <div
+                          className={`absolute -top-7 ${reactPickerId === msg.id ? "opacity-100" : "opacity-0"} group-hover:opacity-100 transition-opacity flex items-center gap-1 p-1 rounded-full bg-paper border border-hairline shadow-md z-20 ${isMe ? "right-0" : "left-0"
+                            }`}
                         >
-                          Reply
-                        </button>
-                      </div>
+                          {["❤️", "👍", "🔥", "😂"].map((emoji) => (
+                            <button
+                              key={emoji}
+                              type="button"
+                              onClick={() => handleAddReaction(msg.id, emoji)}
+                              className="w-6 h-6 hover:scale-125 transition-transform text-xs flex items-center justify-center cursor-pointer"
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => setReactPickerId(reactPickerId === msg.id ? null : msg.id)}
+                            aria-label="More reactions"
+                            title="More reactions"
+                            className="w-6 h-6 rounded-full text-slate hover:text-ink hover:bg-paper-dim flex items-center justify-center cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                          {reactPickerId === msg.id && (
+                            <>
+                              <div className="fixed inset-0 z-20" onClick={() => setReactPickerId(null)} />
+                              <div className={`absolute bottom-9 z-30 ${isMe ? "right-0" : "left-0"}`}>
+                                <EmojiPicker
+                                  compact
+                                  onPick={(emoji) => {
+                                    handleAddReaction(msg.id, emoji);
+                                    setReactPickerId(null);
+                                  }}
+                                />
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
               })}
 
               <div ref={messagesEndRef} />
+              {infoMsg && (
+                <MessageInfo
+                  msg={infoMsg}
+                  mine={infoMsg.author_id === me}
+                  group={selectedContact.type === "group"}
+                  onClose={() => setInfoMsg(null)}
+                />
+              )}
+              {forwardingMsg && (
+                <ForwardModal
+                  msg={forwardingMsg}
+                  contacts={contacts}
+                  onForward={handleForwardTo}
+                  onClose={() => setForwardingMsg(null)}
+                />
+              )}
+              {away && (
+                <div className="sticky bottom-2 h-0 overflow-visible">
+                  <button
+                    type="button"
+                    onClick={() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })}
+                    aria-label="Jump to the latest message"
+                    className="absolute bottom-0 right-0 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-hairline bg-paper text-ink-700 shadow-lg transition-colors hover:bg-paper-dim"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Live Typing Bar */}
@@ -902,15 +1995,23 @@ export function RealtimeChatView({ user }: { user: User }) {
 
             {/* Reply Bar Preview */}
             {replyMessage && (
-              <div className="px-4 py-2 border-t border-hairline bg-paper-dim/60 flex items-center justify-between">
-                <div className="text-xs">
-                  <span className="font-bold text-ink-900 block">
-                    Replying to {replyMessage.author_name}
-                  </span>
-                  <p className="text-slate line-clamp-1">{replyMessage.text}</p>
-                </div>
+              <div className="px-4 py-2 border-t border-hairline bg-paper-dim/60 flex items-center gap-3">
+                <Reply className="w-4 h-4 text-emerald-600 shrink-0" />
                 <button
+                  type="button"
+                  onClick={() => jumpToMessage(replyMessage.id)}
+                  className="min-w-0 flex-1 text-left text-xs border-l-4 border-emerald-500 pl-2.5 cursor-pointer"
+                  title="Show the message"
+                >
+                  <span className="font-bold text-emerald-700 dark:text-emerald-400 block">
+                    Replying to {replyMessage.author_id === me ? "yourself" : replyMessage.author_name}
+                  </span>
+                  <span className="text-slate line-clamp-1">{previewOf(replyMessage)}</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => setReplyMessage(null)}
+                  aria-label="Cancel reply"
                   className="p-1 text-slate hover:text-ink cursor-pointer"
                 >
                   <X className="w-4 h-4" />
@@ -918,22 +2019,41 @@ export function RealtimeChatView({ user }: { user: User }) {
               </div>
             )}
 
-            {/* Emoji Selector Tray */}
-            {showEmojiPicker && (
-              <div className="p-3 border-t border-hairline bg-paper flex items-center gap-2 overflow-x-auto">
-                {COMMON_EMOJIS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    onClick={() => {
-                      setInputText((prev) => prev + emoji);
-                      setShowEmojiPicker(false);
-                    }}
-                    className="w-8 h-8 rounded-lg hover:bg-paper-dim text-lg flex items-center justify-center transition-transform hover:scale-125 cursor-pointer"
-                  >
-                    {emoji}
+            {/* File on its way (or why it failed) */}
+            {upload && (
+              <div className="px-4 py-2 border-t border-hairline bg-paper-dim/60 flex items-center gap-3 text-xs">
+                {upload.error ? (
+                  <AlertCircle className="w-4 h-4 text-berry shrink-0" />
+                ) : (
+                  <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-ink-900 truncate">{upload.filename}</p>
+                  {upload.error ? (
+                    <p className="text-berry">{upload.error}</p>
+                  ) : (
+                    <div className="mt-1 h-1.5 rounded-full bg-hairline overflow-hidden">
+                      <div className="h-full bg-emerald-500 transition-all" style={{ width: `${Math.round(upload.progress * 100)}%` }} />
+                    </div>
+                  )}
+                </div>
+                {upload.error && (
+                  <button type="button" onClick={() => setUpload(null)} aria-label="Dismiss" className="p-1 text-slate hover:text-ink cursor-pointer">
+                    <X className="w-4 h-4" />
                   </button>
-                ))}
+                )}
+              </div>
+            )}
+
+            {/* Emoji picker: categories, search and recently used */}
+            {showEmojiPicker && (
+              <div className="border-t border-hairline bg-paper">
+                <EmojiPicker
+                  onPick={(emoji) => {
+                    setInputText((prev) => prev + emoji);
+                    inputRef.current?.focus();
+                  }}
+                />
               </div>
             )}
 
@@ -950,20 +2070,31 @@ export function RealtimeChatView({ user }: { user: User }) {
                 <Smile className="w-5 h-5" />
               </button>
 
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"
+                onChange={handlePickFile}
+              />
               <button
                 type="button"
-                onClick={() => alert("Upload file proof (PDF, image, commit artifact)...")}
-                className="p-2 rounded-xl text-slate hover:text-ink hover:bg-paper-dim transition-colors cursor-pointer"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!!upload && !upload.error}
+                title="Send a photo or document (up to 10 MB)"
+                aria-label="Attach a file"
+                className="p-2 rounded-xl text-slate hover:text-ink hover:bg-paper-dim transition-colors cursor-pointer disabled:opacity-40"
               >
                 <Paperclip className="w-5 h-5" />
               </button>
 
               <input
+                ref={inputRef}
                 type="text"
-                placeholder={`Message ${selectedContact.name}...`}
+                placeholder={upload && !upload.error ? "Add a caption…" : `Message ${selectedContact.name}...`}
                 value={inputText}
                 onChange={handleInputChange}
-                className="flex-1 h-11 px-4 rounded-xl border border-hairline bg-paper-dim text-sm text-ink-900 placeholder:text-slate focus:outline-none focus:border-ink transition-colors"
+                className="flex-1 min-w-0 h-11 px-4 rounded-xl border border-hairline bg-paper-dim text-sm text-ink-900 placeholder:text-slate focus:outline-none focus:border-ink transition-colors"
               />
 
               <button
@@ -988,16 +2119,21 @@ export function RealtimeChatView({ user }: { user: User }) {
             className="fixed inset-0"
             onClick={() => setShowNewDmModal(false)}
           />
-          <div className="relative w-full sm:max-w-md h-[80vh] max-h-[80vh] sm:h-auto sm:max-h-[85vh] bg-paper rounded-t-[32px] sm:rounded-2xl border-t sm:border border-hairline shadow-2xl p-5 sm:p-6 space-y-4 flex flex-col z-10 animate-in slide-in-from-bottom sm:zoom-in-95 duration-200">
+          <div className="relative w-full sm:max-w-md h-[80vh] max-h-[80vh] sm:h-[540px] sm:max-h-[85vh] bg-paper rounded-t-[32px] sm:rounded-2xl border-t sm:border border-hairline shadow-2xl p-5 sm:p-6 space-y-4 flex flex-col z-10 animate-in slide-in-from-bottom sm:zoom-in-95 duration-200">
             {/* Grabber indicator for mobile */}
             <div className="pt-1 pb-1 flex justify-center sm:hidden shrink-0">
               <div className="w-12 h-1.5 rounded-full bg-hairline" />
             </div>
 
             <div className="flex items-center justify-between pb-3 border-b border-hairline shrink-0">
-              <h3 className="text-base font-bold text-ink-900">
-                Start New Direct Message (1:1)
-              </h3>
+              <div>
+                <h3 className="text-base font-bold text-ink-900">
+                  New Direct Message
+                </h3>
+                <p className="text-[11px] text-slate mt-0.5">
+                  Search members by name or username to start chatting.
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowNewDmModal(false)}
@@ -1007,41 +2143,94 @@ export function RealtimeChatView({ user }: { user: User }) {
               </button>
             </div>
 
-            <p className="text-xs text-slate shrink-0">
-              Select a verified engineer or professional to start a private real-time chat.
-            </p>
+            {/* Search Box */}
+            <div className="relative shrink-0">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate pointer-events-none" />
+              <input
+                type="text"
+                autoFocus
+                placeholder="Type member name or @username..."
+                value={memberSearchQuery}
+                onChange={(e) => setMemberSearchQuery(e.target.value)}
+                className="w-full h-10 pl-9 pr-9 rounded-xl bg-paper-dim text-xs text-ink-900 placeholder:text-slate focus:outline-none focus:ring-1 focus:ring-ink"
+              />
+              {memberSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setMemberSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate hover:text-ink cursor-pointer p-0.5"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
 
+            {/* Results List */}
             <div className="space-y-2 overflow-y-auto flex-1 pr-1">
-              {contacts
-                .filter((c) => c.type === "direct")
-                .map((peer) => (
-                  <button
-                    key={peer.id}
-                    onClick={() => {
-                      setSelectedContact(peer);
-                      setShowNewDmModal(false);
-                      setShowMobileChat(true);
-                    }}
-                    className="w-full p-3 rounded-xl border border-hairline hover:border-ink flex items-center gap-3 text-left transition-colors cursor-pointer"
-                  >
-                    <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-600 font-bold flex items-center justify-center text-xs">
-                      {peer.name.charAt(0)}
+              {loadingMembers ? (
+                <div className="p-4 space-y-3">
+                  {[1, 2, 3].map((n) => (
+                    <div key={n} className="flex items-center gap-3 animate-pulse">
+                      <div className="w-10 h-10 rounded-xl bg-paper-dim shrink-0" />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="h-3.5 bg-paper-dim rounded-md w-3/4" />
+                        <div className="h-2.5 bg-paper-dim rounded-md w-1/2" />
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-xs font-bold text-ink-900 block">
-                        {peer.name}
-                      </span>
-                      <span className="text-[11px] text-slate block">{peer.role}</span>
-                    </div>
-                  </button>
-                ))}
+                  ))}
+                </div>
+              ) : discoveredMembers.length === 0 ? (
+                <div className="py-10 text-center text-slate">
+                  <UserIcon className="w-8 h-8 mx-auto mb-2 opacity-30 text-ink" />
+                  <p className="text-xs font-semibold text-ink-900">
+                    {memberSearchQuery ? "No members match your search" : "No members available"}
+                  </p>
+                  <p className="text-[11px] text-slate mt-0.5">
+                    {memberSearchQuery ? "Try searching with a different name or username" : "Invite other verified professionals to Proofolio."}
+                  </p>
+                </div>
+              ) : (
+                discoveredMembers.map((peer) => {
+                  const hasExistingChat = contacts.some((c) => c.id === peer.id);
+                  return (
+                    <button
+                      key={peer.id}
+                      type="button"
+                      onClick={() => handleSelectMember(peer)}
+                      className="w-full p-3 rounded-xl border border-hairline hover:border-ink flex items-center justify-between gap-3 text-left transition-colors cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <UserAvatar name={peer.name} src={peer.avatar} className="w-10 h-10 rounded-xl text-xs" />
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-ink-900 block truncate group-hover:text-blue-600 transition-colors">
+                            {peer.name}
+                          </span>
+                          <span className="text-[11px] text-slate block truncate">
+                            {peer.role || `@${peer.username}`}
+                          </span>
+                        </div>
+                      </div>
+
+                      {hasExistingChat ? (
+                        <span className="text-[10px] font-semibold text-slate bg-paper-dim px-2 py-0.5 rounded-full shrink-0">
+                          Active chat
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-full shrink-0">
+                          Start
+                        </span>
+                      )}
+                    </button>
+                  );
+                })
+              )}
             </div>
 
             <div className="pt-2 border-t border-hairline sm:hidden">
               <button
                 type="button"
                 onClick={() => setShowNewDmModal(false)}
-                className="w-full h-12 rounded-xl border border-hairline text-sm font-semibold text-slate hover:bg-paper-dim flex items-center justify-center cursor-pointer"
+                className="w-full h-11 rounded-xl border border-hairline text-sm font-semibold text-slate hover:bg-paper-dim flex items-center justify-center cursor-pointer"
               >
                 Close
               </button>
@@ -1067,7 +2256,7 @@ export function RealtimeChatView({ user }: { user: User }) {
 
             <div className="flex items-center justify-between pb-3 border-b border-hairline shrink-0">
               <h3 className="text-base font-bold text-ink-900">
-                Create Real-Time Group Channel
+                Create Group
               </h3>
               <button
                 type="button"
@@ -1086,7 +2275,7 @@ export function RealtimeChatView({ user }: { user: User }) {
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Distributed Systems Guild"
+                  placeholder="e.g. Family, siblings, collage"
                   value={newGroupName}
                   onChange={(e) => setNewGroupName(e.target.value)}
                   className="w-full h-10 px-3.5 rounded-xl border border-hairline bg-paper text-sm text-ink-900 focus:outline-none focus:border-ink"
@@ -1099,12 +2288,45 @@ export function RealtimeChatView({ user }: { user: User }) {
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Real-time consensus, Raft implementations, Kafka streaming"
+                  placeholder="e.g. Business plans, family meetings "
                   value={newGroupTopic}
                   onChange={(e) => setNewGroupTopic(e.target.value)}
                   className="w-full h-10 px-3.5 rounded-xl border border-hairline bg-paper text-sm text-ink-900 focus:outline-none focus:border-ink"
                 />
               </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate mb-1">Add members</label>
+                <p className="text-[11px] text-slate mb-2">
+                  Each person gets an invitation to accept. You&apos;ll be the group admin.
+                </p>
+                {groupPicks.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {groupPicks.map((p) => (
+                      <span key={p.id} className="inline-flex items-center gap-1 rounded-full bg-purple-500/10 px-2.5 py-1 text-[11px] font-semibold text-purple-700 dark:text-purple-300">
+                        {p.name}
+                        <button type="button" onClick={() => togglePick(p)} aria-label={`Remove ${p.name}`} className="cursor-pointer rounded-full hover:text-ink">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <MemberPicker
+                  query={pickQuery}
+                  onQuery={setPickQuery}
+                  results={pickResults}
+                  isPicked={(p) => groupPicks.some((g) => g.id === p.id)}
+                  onPick={togglePick}
+                  actionLabel={(picked) => (picked ? "Added" : "Add")}
+                />
+              </div>
+
+              {groupError && (
+                <p role="alert" className="rounded-xl border border-berry/30 bg-berry/10 px-3 py-2 text-xs font-semibold text-berry">
+                  {groupError}
+                </p>
+              )}
 
               <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 pt-3 border-t border-hairline">
                 <button
@@ -1116,15 +2338,482 @@ export function RealtimeChatView({ user }: { user: User }) {
                 </button>
                 <button
                   type="submit"
-                  className="w-full sm:w-auto px-5 h-12 sm:h-10 rounded-xl bg-ink text-paper text-sm font-semibold hover:opacity-90 active:scale-[0.99] cursor-pointer flex items-center justify-center"
+                  disabled={creatingGroup}
+                  className="w-full sm:w-auto px-5 h-12 sm:h-10 rounded-xl bg-ink text-paper text-sm font-semibold hover:opacity-90 active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
                 >
-                  Create Group
+                  {creatingGroup && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {groupPicks.length ? `Create & invite ${groupPicks.length}` : "Create group"}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      {/* ========================================================
+          PANEL: Group members (3-dot menu > Members): who is admin, who is still invited,
+          and admin controls (invite, make/remove admin, remove, cancel invite).
+          ======================================================== */}
+      {showContactInfo && selectedContact?.type === "direct" && (
+        <ContactInfoPanel
+          userId={selectedContact.id}
+          fallbackName={selectedContact.name}
+          onClose={() => setShowContactInfo(false)}
+          onOpenProfile={(username) => router.push(`/u/${username}`)}
+          onJumpTo={(id) => {
+            setShowContactInfo(false);
+            setTimeout(() => jumpToMessage(id), 150);
+          }}
+        />
+      )}
+
+      {showGroupInfo && selectedContact?.type === "group" && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="fixed inset-0" onClick={closeGroupInfo} />
+          <div className="relative w-full sm:max-w-md h-[85vh] sm:h-auto sm:max-h-[85vh] bg-paper rounded-t-[32px] sm:rounded-2xl border-t sm:border border-hairline shadow-2xl p-5 sm:p-6 flex flex-col gap-4 z-10 animate-in slide-in-from-bottom sm:zoom-in-95 duration-200">
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-hairline shrink-0">
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-ink-900 truncate">{groupInfo?.name ?? selectedContact.name}</h3>
+                {groupInfo?.topic && <p className="text-xs text-slate mt-0.5">{groupInfo.topic}</p>}
+              </div>
+              <button type="button" onClick={closeGroupInfo} aria-label="Close" className="p-1 rounded-lg text-slate hover:text-ink cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {groupNotice && (
+              <p className="shrink-0 rounded-xl bg-paper-dim px-3 py-2 text-xs font-semibold text-ink-700">{groupNotice}</p>
+            )}
+
+            <div className="flex-1 overflow-y-auto space-y-5 min-h-0">
+              {!groupInfo ? (
+                <div className="flex justify-center py-10">
+                  <Loader2 className="w-5 h-5 animate-spin text-slate" />
+                </div>
+              ) : (
+                <>
+                  {groupInfo.my_role === "admin" && (
+                    <section className="space-y-3">
+                      <h4 className="text-xs font-bold text-slate uppercase tracking-wide">Group details</h4>
+                      <div className="flex items-center gap-3">
+                        <UserAvatar name={groupInfo.name} src={groupInfo.avatar} className="w-14 h-14 rounded-2xl text-lg" />
+                        <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleGroupPicture} />
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={gBusy}
+                            onClick={() => avatarInputRef.current?.click()}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-hairline px-2.5 py-1.5 text-[11px] font-semibold text-ink-700 hover:bg-paper-dim cursor-pointer disabled:opacity-50"
+                          >
+                            <Camera className="w-3.5 h-3.5" /> {groupInfo.avatar ? "Change picture" : "Add picture"}
+                          </button>
+                          {groupInfo.avatar && (
+                            <button
+                              type="button"
+                              disabled={gBusy}
+                              onClick={handleRemoveGroupPicture}
+                              className="rounded-lg border border-hairline px-2.5 py-1.5 text-[11px] font-semibold text-berry hover:bg-berry/5 cursor-pointer disabled:opacity-50"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <input
+                        value={gName}
+                        onChange={(e) => setGName(e.target.value)}
+                        maxLength={120}
+                        aria-label="Group name"
+                        placeholder="Group name"
+                        className="w-full h-10 px-3 rounded-xl border border-hairline bg-paper-dim text-sm text-ink-900 focus:outline-none focus:border-ink"
+                      />
+                      <input
+                        value={gTopic}
+                        onChange={(e) => setGTopic(e.target.value)}
+                        maxLength={200}
+                        aria-label="Group description"
+                        placeholder="Description (optional)"
+                        className="w-full h-10 px-3 rounded-xl border border-hairline bg-paper-dim text-sm text-ink-900 focus:outline-none focus:border-ink"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSaveGroupDetails}
+                        disabled={gBusy || (gName.trim() === groupInfo.name && gTopic.trim() === (groupInfo.topic ?? ""))}
+                        className="h-9 px-4 rounded-xl bg-ink text-paper text-xs font-semibold disabled:opacity-40 cursor-pointer"
+                      >
+                        Save changes
+                      </button>
+                    </section>
+                  )}
+
+                  {groupInfo.my_role === "admin" && (
+                    <section>
+                      <h4 className="text-xs font-bold text-slate uppercase tracking-wide mb-2">Add members</h4>
+                      <MemberPicker
+                        query={pickQuery}
+                        onQuery={setPickQuery}
+                        results={pickResults.filter((p) => !groupInfo.members.some((m) => m.user_id === p.id))}
+                        isPicked={() => false}
+                        onPick={handleInviteToGroup}
+                        actionLabel={() => "Invite"}
+                      />
+                    </section>
+                  )}
+
+                  {(["member", "invited"] as const).map((status) => {
+                    const list = groupInfo.members.filter((m) => m.status === status);
+                    if (!list.length) return null;
+                    return (
+                      <section key={status}>
+                        <h4 className="text-xs font-bold text-slate uppercase tracking-wide mb-2">
+                          {status === "member" ? `Members · ${list.length}` : `Invited, waiting to accept · ${list.length}`}
+                        </h4>
+                        <ul className="space-y-1">
+                          {list.map((m) => {
+                            const canManage = groupInfo.my_role === "admin" && !m.is_me;
+                            return (
+                              <li key={m.user_id} className="flex items-center gap-3 rounded-xl p-2 hover:bg-paper-dim/60">
+                                <div className="relative shrink-0">
+                                  <UserAvatar name={m.name} src={m.avatar} className="w-9 h-9 rounded-xl text-xs" />
+                                  {status === "member" && (m.is_me || onlineIds.has(m.user_id)) && (
+                                    <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-paper" />
+                                  )}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-[13px] font-bold text-ink-900 truncate flex items-center gap-1.5">
+                                    {m.name}
+                                    {m.is_me && <span className="text-[10px] font-semibold text-slate">(you)</span>}
+                                  </p>
+                                  <p className="text-[11px] text-slate truncate">@{m.username}</p>
+                                </div>
+                                {m.role === "admin" && status === "member" && (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-brass/15 px-2 py-0.5 text-[10px] font-bold text-brass-dark shrink-0">
+                                    <Crown className="w-3 h-3" /> Admin
+                                  </span>
+                                )}
+                                {canManage && (
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    {status === "member" && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRoleChange(m.user_id, m.role === "admin" ? "member" : "admin")}
+                                        className="rounded-lg border border-hairline px-2 py-1 text-[10px] font-semibold text-ink-700 hover:bg-paper-dim cursor-pointer"
+                                      >
+                                        {m.role === "admin" ? "Remove admin" : "Make admin"}
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveMember(m.user_id, m.name)}
+                                      title={status === "member" ? "Remove from group" : "Cancel invitation"}
+                                      aria-label={status === "member" ? `Remove ${m.name}` : `Cancel invitation for ${m.name}`}
+                                      className="rounded-lg p-1.5 text-slate hover:bg-berry/10 hover:text-berry cursor-pointer"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </section>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-hairline shrink-0">
+              <button
+                type="button"
+                onClick={handleLeaveGroup}
+                className="w-full h-11 rounded-xl border border-berry/30 text-sm font-semibold text-berry hover:bg-berry/5 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" /> Leave group
+              </button>
+              {groupInfo?.my_role === "admin" && (
+                <button
+                  type="button"
+                  onClick={handleDeleteGroup}
+                  className="mt-2 w-full h-11 rounded-xl bg-berry text-sm font-semibold text-white hover:opacity-90 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete group for everyone
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** "Message info": when a message was sent, read and edited. Read receipts exist for direct messages only. */
+function MessageInfo({ msg, mine, group, onClose }: { msg: ChatMessage; mine: boolean; group: boolean; onClose: () => void }) {
+  const when = (iso?: string | null) =>
+    iso ? new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : null;
+  const rows: [typeof Clock, string, string][] = [];
+  if (!mine) rows.push([UserIcon, "From", `${msg.author_name} (@${msg.author_username})`]);
+  rows.push([Check, mine ? "Sent" : "Received", when(msg.timestamp) ?? "—"]);
+  if (mine && !group) rows.push([CheckCheck, "Read", when(msg.read_at) ?? (msg.status === "read" ? "Read" : "Not read yet")]);
+  if (msg.edited_at) rows.push([Pencil, "Edited", when(msg.edited_at)!]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Message info"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-t-2xl border border-hairline bg-paper shadow-2xl sm:rounded-2xl"
+      >
+        <div className="flex items-center gap-3 border-b border-hairline px-4 py-3">
+          <button type="button" onClick={onClose} aria-label="Close" className="rounded-full p-1 text-slate hover:bg-paper-dim hover:text-ink cursor-pointer">
+            <X className="h-4 w-4" />
+          </button>
+          <h3 className="text-[15px] font-semibold text-ink-800">Message info</h3>
+        </div>
+        <div className="bg-paper-dim/60 px-4 py-4">
+          <p
+            className={`ml-auto max-w-[85%] w-fit rounded-2xl px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words line-clamp-6 ${mine ? "bg-emerald-600 text-white rounded-br-xs" : "mr-auto ml-0 bg-paper text-ink-900 border border-hairline rounded-bl-xs"
+              }`}
+          >
+            {messagePreview(msg) || "—"}
+          </p>
+        </div>
+        <ul className="divide-y divide-hairline px-4 pb-2">
+          {rows.map(([Icon, label, value]) => (
+            <li key={label} className="flex items-start gap-3 py-3">
+              <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${label === "Read" && msg.read_at ? "text-blue-500" : "text-slate"}`} />
+              <div className="min-w-0">
+                <p className="text-[13px] font-semibold text-ink-800">{label}</p>
+                <p className="text-[12px] text-slate break-words">{value}</p>
+              </div>
+            </li>
+          ))}
+          {mine && group && <li className="py-3 text-[12px] text-slate">Read receipts are not shown in groups.</li>}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function MenuItem({
+  icon: Icon,
+  onClick,
+  children,
+  danger,
+}: {
+  icon: typeof Users;
+  onClick: () => void;
+  children: React.ReactNode;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-[13px] font-medium cursor-pointer hover:bg-paper-dim ${danger ? "text-berry" : "text-ink-800"
+        }`}
+    >
+      <Icon className="w-4 h-4 shrink-0" />
+      {children}
+    </button>
+  );
+}
+
+/** Search registered members and pick them (create a group) or invite them (an admin, in the panel). */
+function MemberPicker({
+  query,
+  onQuery,
+  results,
+  isPicked,
+  onPick,
+  actionLabel,
+}: {
+  query: string;
+  onQuery: (q: string) => void;
+  results: ChatContact[];
+  isPicked: (p: ChatContact) => boolean;
+  onPick: (p: ChatContact) => void;
+  actionLabel: (picked: boolean) => string;
+}) {
+  return (
+    <div>
+      <div className="relative">
+        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate pointer-events-none" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          placeholder="Search members by name or @username"
+          className="w-full h-10 pl-9 pr-3 rounded-xl border border-hairline bg-paper text-sm text-ink-900 focus:outline-none focus:border-ink"
+        />
+      </div>
+      <ul className="mt-2 max-h-48 overflow-y-auto space-y-1">
+        {results.length === 0 ? (
+          <li className="py-3 text-center text-[11px] text-slate">{query ? "No members match." : "No members to show."}</li>
+        ) : (
+          results.slice(0, 30).map((p) => {
+            const picked = isPicked(p);
+            return (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  onClick={() => onPick(p)}
+                  aria-pressed={picked}
+                  className={`w-full flex items-center gap-3 rounded-xl p-2 text-left cursor-pointer transition-colors ${picked ? "bg-purple-500/10" : "hover:bg-paper-dim"
+                    }`}
+                >
+                  <UserAvatar name={p.name} src={p.avatar} className="w-8 h-8 rounded-lg text-xs" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-bold text-ink-900 truncate">{p.name}</span>
+                    <span className="block text-[11px] text-slate truncate">@{p.username}</span>
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shrink-0 ${picked ? "bg-purple-600 text-white" : "bg-paper-dim text-ink-700"
+                      }`}
+                  >
+                    {picked ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                    {actionLabel(picked)}
+                  </span>
+                </button>
+              </li>
+            );
+          })
+        )}
+      </ul>
+    </div>
+  );
+}
+
+function ForwardModal({
+  msg,
+  contacts,
+  onForward,
+  onClose,
+}: {
+  msg: ChatMessage;
+  contacts: ChatContact[];
+  onForward: (target: ChatContact) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const filtered = contacts.filter(
+    (c) =>
+      !query ||
+      c.name.toLowerCase().includes(query.toLowerCase()) ||
+      (c.username && c.username.toLowerCase().includes(query.toLowerCase()))
+  );
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-xs p-0 sm:items-center sm:p-4 animate-in fade-in duration-200"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Forward message"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-t-3xl border border-hairline bg-paper shadow-2xl sm:rounded-3xl overflow-hidden flex flex-col max-h-[85vh]"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-hairline px-5 py-3.5 bg-paper">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600">
+              <Forward className="h-4 w-4" />
+            </div>
+            <div>
+              <h3 className="text-[15px] font-semibold text-ink-800">Forward message</h3>
+              <p className="text-[11px] text-slate">Select a contact or group</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-full p-1.5 text-slate hover:bg-paper-dim hover:text-ink cursor-pointer transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Message preview snippet */}
+        <div className="bg-paper-dim/60 px-5 py-3 border-b border-hairline/60">
+          <div className="rounded-2xl border border-hairline/80 bg-paper p-3 text-xs shadow-2xs">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="font-semibold text-ink-800 truncate">
+                {msg.author_name}
+              </span>
+              <span className="text-[10px] text-slate">
+                {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            </div>
+            {msg.attachment && (
+              <div className="mb-1 text-[11px] text-emerald-600 flex items-center gap-1.5">
+                <Paperclip className="w-3 h-3" />
+                <span className="truncate">{msg.attachment.filename}</span>
+              </div>
+            )}
+            {msg.text && (
+              <p className="line-clamp-3 text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
+                {msg.text}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Search contacts */}
+        <div className="p-3 border-b border-hairline/60">
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate pointer-events-none" />
+            <input
+              type="text"
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search contacts or groups..."
+              className="w-full h-9.5 pl-9.5 pr-4 rounded-xl border border-hairline bg-paper text-xs text-ink-900 focus:outline-none focus:ring-1 focus:ring-emerald-500 placeholder:text-slate"
+            />
+          </div>
+        </div>
+
+        {/* List of contacts */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-1 divide-y divide-hairline/30">
+          {filtered.length === 0 ? (
+            <div className="py-8 text-center text-xs text-slate">
+              {query ? "No matching contacts found." : "No contacts available."}
+            </div>
+          ) : (
+            filtered.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => onForward(c)}
+                className="w-full flex items-center justify-between p-2.5 rounded-2xl hover:bg-paper-dim text-left cursor-pointer transition group"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <UserAvatar name={c.name} src={c.avatar} className="w-9 h-9 rounded-xl text-xs shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-ink-900 truncate group-hover:text-emerald-700 transition-colors">
+                      {c.name}
+                    </p>
+                    <p className="text-[11px] text-slate truncate">
+                      {c.type === "group" ? "Group conversation" : `@${c.username || "direct"}`}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-500/10 text-emerald-600 text-xs font-medium opacity-90 group-hover:bg-emerald-600 group-hover:text-white transition-all shadow-2xs">
+                  <span>Send</span>
+                  <Forward className="w-3.5 h-3.5" />
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
     </div>
   );
 }

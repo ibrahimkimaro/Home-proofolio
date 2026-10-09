@@ -11,7 +11,7 @@ RUN mix local.hex --force && \
 
 # Copy mix files and fetch dependencies
 COPY mix.exs ./
-RUN mix deps.get
+RUN HEX_HTTP_CONCURRENCY=1 HEX_HTTP_TIMEOUT=300 mix deps.get
 
 # Copy source code and compile
 COPY config config

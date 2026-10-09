@@ -25,7 +25,7 @@ import {
   LucideIcon,
 } from "lucide-react";
 import { listWork, deleteWork, type Work } from "@/lib/api";
-import { AppShell, useSession } from "@/components/app/AppShell";
+import { AppShell, AppShellSkeleton, useSession } from "@/components/app/AppShell";
 import { UniversalWorkForm } from "@/components/app/UniversalWorkForm";
 import { stateLabel } from "@/lib/items";
 
@@ -148,7 +148,7 @@ export default function WorkProjectsPage() {
     };
   }, [works]);
 
-  if (!user) return <div className="min-h-screen bg-paper-dim" />;
+  if (!user) return <AppShellSkeleton />;
 
   return (
     <AppShell user={user}>

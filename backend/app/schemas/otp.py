@@ -14,8 +14,11 @@ class OtpGenerateResponse(BaseModel):
     message: str
     destination: str
     channel: str
-    code: str  # Simulated delivery code
+    code: str
     expires_in_seconds: int = 600
+    # emailed (went out by email) | manual (waiting for an admin to send it)
+    delivery: str = "manual"
+    user_name: str | None = None
 
 
 class OtpVerifyRequest(BaseModel):
@@ -38,6 +41,7 @@ class OtpLogOut(BaseModel):
     purpose: str
     is_verified: bool
     delivery_status: str
+    sent_via: str | None = None
     expires_at: datetime
     created_at: datetime
     verified_at: datetime | None = None

@@ -3,16 +3,17 @@
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Building2, Search } from "lucide-react";
+import { Building2, MessageSquare, Search, ThumbsUp } from "lucide-react";
 import { search, type SearchResults } from "@/lib/api";
 import { KINDS, kindOf, stateLabel } from "@/lib/items";
 import { AppShell, Avatar, useSession } from "@/components/app/AppShell";
 
-type Tab = "all" | "people" | "work" | "businesses" | "skills";
+type Tab = "all" | "people" | "work" | "discussions" | "businesses" | "skills";
 const TABS: { id: Tab; label: string }[] = [
   { id: "all", label: "All" },
   { id: "people", label: "People" },
   { id: "work", label: "Work" },
+  { id: "discussions", label: "Discussions" },
   { id: "businesses", label: "Businesses" },
   { id: "skills", label: "Skills" },
 ];
@@ -139,6 +140,58 @@ function Discover() {
                     </span>
                     <span className="mt-0.5 block text-[16px] font-semibold leading-snug">{w.title}</span>
                     <span className="mt-1 block text-[13px] text-slate">by {w.owner.display_name}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Group>
+        )}
+
+        {show("discussions") && !!results?.discussions?.length && (
+          <Group title="Discussions & Proposals">
+            <ul className="space-y-3">
+              {results.discussions.map((d) => (
+                <li key={d.id}>
+                  <Link
+                    href={`/discussions?thread=${d.id}`}
+                    className="block rounded-xl bg-paper p-4 transition-all hover:bg-paper/80 border border-hairline/60 hover:border-sky-500/30 shadow-sm"
+                  >
+                    <div className="flex items-center justify-between text-[12px] text-slate">
+                      <span className="font-semibold text-sky-500 uppercase tracking-wider text-[11px]">
+                        {d.category}
+                      </span>
+                      <span className="flex items-center gap-3">
+                        <span className="flex items-center gap-1 font-medium text-ink">
+                          <ThumbsUp className="h-3.5 w-3.5 text-sky-500" /> {d.upvotes}
+                        </span>
+                        <span className="flex items-center gap-1 font-medium text-slate">
+                          <MessageSquare className="h-3.5 w-3.5" /> {d.replies} {d.replies === 1 ? "reply" : "replies"}
+                        </span>
+                      </span>
+                    </div>
+                    <span className="mt-1.5 block text-[16px] font-bold leading-snug text-ink hover:text-sky-500 transition-colors">
+                      {d.title}
+                    </span>
+                    <p className="mt-1 line-clamp-2 text-[13px] text-slate/90 leading-relaxed">
+                      {d.content}
+                    </p>
+                    <div className="mt-3 flex items-center justify-between pt-2.5 border-t border-hairline/40 text-[12px] text-slate">
+                      <span className="flex items-center gap-2">
+                        {d.author.avatar ? (
+                          <Avatar name={d.author.name} src={d.author.avatar} className="h-5 w-5 text-[10px]" />
+                        ) : null}
+                        <span>by <strong className="font-medium text-ink">{d.author.name}</strong></span>
+                      </span>
+                      {d.tags && d.tags.length > 0 && (
+                        <div className="flex gap-1.5 flex-wrap">
+                          {d.tags.slice(0, 3).map((t) => (
+                            <span key={t} className="rounded-md bg-paper-dim px-2 py-0.5 text-[11px] font-medium text-slate">
+                              #{t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </Link>
                 </li>
               ))}

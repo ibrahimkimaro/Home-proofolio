@@ -21,6 +21,8 @@ class OtpLog(Base):
     purpose: Mapped[str] = mapped_column(String(50), default="mfa_verification", nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     delivery_status: Mapped[str] = mapped_column(String(50), default="simulated_sent", nullable=False)
+    # How a sent code reached the member: "email" (the system) or "admin" (by hand). None until sent.
+    sent_via: Mapped[str | None] = mapped_column(String(20), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

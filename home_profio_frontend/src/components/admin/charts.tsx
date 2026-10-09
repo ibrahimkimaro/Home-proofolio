@@ -140,3 +140,62 @@ export function Kpi({ label, value, prev, hint }: { label: string; value: number
     </div>
   );
 }
+
+const SLICES = ["#c9a227", "#38bdf8", "#10b981", "#a855f7", "#f43f5e", "#f59e0b", "#06b6d4", "#8b5cf6", "#ec4899", "#84cc16", "#64748b", "#14b8a6", "#f97316", "#6366f1"];
+
+/** Pie or donut with its legend beside (or under, on a phone) it. Hover a row to see its share. */
+export function PieList({ title, bars, empty = "No data yet", donut = false }: { title: string; bars: Bar[]; empty?: string; donut?: boolean }) {
+  const total = bars.reduce((n, b) => n + b.value, 0);
+  const R = donut ? 15.915 : 8; // a pie is a ring as thick as its radius: the stroke fills it to the centre
+  const C = 2 * Math.PI * R;
+  let done = 0; // share already drawn, in percent
+  return (
+    <figure className="pf-surface min-w-0 rounded-2xl border border-hairline/80 bg-paper p-5 shadow-2xs">
+      <figcaption className="text-[13px] font-semibold text-slate">{title}</figcaption>
+      {bars.length === 0 || total === 0 ? (
+        <p className="mt-6 pb-4 text-center text-[13px] text-slate">{empty}</p>
+      ) : (
+        <div className="mt-4 flex flex-col items-center gap-5 sm:flex-row">
+          <svg viewBox="0 0 42 42" className="h-44 w-44 shrink-0" role="img" aria-label={title}>
+            {bars.map((b, i) => {
+              const pct = (b.value / total) * 100;
+              const slice = (
+                <circle
+                  key={b.label}
+                  cx="21"
+                  cy="21"
+                  r={R}
+                  fill="none"
+                  stroke={SLICES[i % SLICES.length]}
+                  strokeWidth={donut ? 7 : 16}
+                  strokeDasharray={`${(pct / 100) * C} ${C}`}
+                  strokeDashoffset={C * 0.25 - (done / 100) * C}
+                  className="transition-opacity hover:opacity-80"
+                >
+                  <title>{`${b.label}: ${b.value} (${Math.round(pct)}%)`}</title>
+                </circle>
+              );
+              done += pct;
+              return slice;
+            })}
+            {donut && (
+              <text x="21" y="22.5" textAnchor="middle" className="fill-ink-800 text-[6px] font-semibold">
+                {total}
+              </text>
+            )}
+          </svg>
+          <ul className="w-full min-w-0 flex-1 space-y-1.5 text-[13px]">
+            {bars.map((b, i) => (
+              <li key={b.label} className="flex items-center gap-2" title={`${b.label}: ${b.value} (${Math.round((b.value / total) * 100)}%)`}>
+                <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ background: SLICES[i % SLICES.length] }} />
+                <span className="min-w-0 flex-1 truncate text-ink-700">{b.label}</span>
+                <span className="font-semibold tabular-nums text-ink-800">{b.value}</span>
+                <span className="w-9 text-right tabular-nums text-slate">{Math.round((b.value / total) * 100)}%</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </figure>
+  );
+}

@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Headset } from "lucide-react";
-import { fetchSupportThreads, type SupportThread, type User } from "@/lib/api";
+import { Headset, Trash2 } from "lucide-react";
+import { clearChat, fetchSupportThreads, type SupportThread, type User } from "@/lib/api";
 import { useChatInbox } from "@/components/chat/ChatNotifier";
 import { SupportChat } from "@/components/chat/SupportChat";
 
@@ -31,6 +31,19 @@ export function SupportSection({ admin, onError }: { admin: User; onError: (m: s
     return () => clearInterval(id);
   }, [load]);
 
+  // "Delete chat" for myself: this thread leaves my list (the member or guest still has their copy); it returns,
+  // with only the new messages, if they write again.
+  async function deleteThread(t: SupportThread) {
+    if (!window.confirm(`Delete your chat with ${t.name} for yourself? ${t.is_guest ? "The visitor" : "They"} keep their copy.`)) return;
+    try {
+      await clearChat(t.topic);
+      setThreads((list) => list.filter((x) => x.topic !== t.topic));
+      setOpen((o) => (o?.topic === t.topic ? null : o));
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Could not delete the chat");
+    }
+  }
+
   const me = { id: admin.id, name: "Home Proofolio Support", username: admin.username || "support" };
 
   return (
@@ -47,11 +60,18 @@ export function SupportSection({ admin, onError }: { admin: User; onError: (m: s
               className={`flex w-full cursor-pointer items-start gap-3 border-b border-hairline/60 px-4 py-3 text-left transition-colors hover:bg-paper-dim ${open?.topic === t.topic ? "bg-paper-dim" : ""}`}
             >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-[13px] font-bold text-emerald-600">
-                {(t.name || "?")[0].toUpperCase()}
+                {t.is_guest ? "G" : (t.name || "?")[0].toUpperCase()}
               </span>
               <span className="min-w-0 flex-1">
                 <span className="flex items-center justify-between gap-2">
-                  <span className="truncate text-[13px] font-semibold text-ink-800">{t.name}</span>
+                  <span className="flex items-center gap-1.5 truncate text-[13px] font-semibold text-ink-800">
+                    <span className="truncate">{t.name}</span>
+                    {t.is_guest && (
+                      <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                        Guest
+                      </span>
+                    )}
+                  </span>
                   <span className="shrink-0 text-[11px] text-slate">{ago(t.last_at)}</span>
                 </span>
                 <span className="block truncate text-[12px] text-slate">{t.last}</span>
@@ -65,9 +85,25 @@ export function SupportSection({ admin, onError }: { admin: User; onError: (m: s
       <div className="flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-hairline bg-paper">
         {open ? (
           <>
-            <p className="border-b border-hairline px-4 py-3 text-[14px] font-semibold text-ink-800">
-              {open.name} <span className="font-normal text-slate">@{open.username}</span>
-            </p>
+            <div className="flex items-center justify-between gap-3 border-b border-hairline px-4 py-3">
+              <p className="flex items-center gap-2 text-[14px] font-semibold text-ink-800">
+                {open.name} <span className="font-normal text-slate">@{open.username}</span>
+                {open.is_guest && (
+                  <span className="rounded bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                    Guest Visitor
+                  </span>
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={() => deleteThread(open)}
+                title="Delete this chat for me"
+                aria-label="Delete this chat for me"
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-hairline px-2.5 py-1.5 text-[12px] font-semibold text-berry hover:bg-berry/5"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete chat
+              </button>
+            </div>
             <SupportChat key={open.topic} me={me} topic={open.topic} peerName={open.name} />
           </>
         ) : (

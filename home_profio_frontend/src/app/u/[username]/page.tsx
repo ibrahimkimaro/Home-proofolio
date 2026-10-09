@@ -8,6 +8,7 @@ import { getPublicProfile, publicMediaUrl, SITE_URL } from "@/lib/server-api";
 import { formatMonth } from "@/lib/items";
 import { Card, PublicAvatar, PublicFooter, PublicHeader, SectionTitle } from "@/components/app/PublicChrome";
 import { FollowButton } from "@/components/app/FollowButton";
+import { ProfileActions } from "@/components/app/Engage";
 import { WorkCard } from "@/components/app/WorkCard";
 import MyPortfolio from "@/app/portfolio/My_portfolio";
 
@@ -33,12 +34,21 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
+import { VisitorReturnBar } from "@/components/app/VisitorReturnBar";
+
 export default async function PublicProfilePage({ params }: Props) {
   const { username } = await params;
   const p = await getPublicProfile(username);
   if (!p) notFound();
 
-  return <MyPortfolio publicProfile={p} />;
+  return (
+    <>
+      <VisitorReturnBar profileUsername={p.username} />
+      <MyPortfolio publicProfile={p} />
+      {/* Star, comment, follow, message, ask for the CV: floating, and hidden for the owner. */}
+      <ProfileActions username={p.username} displayName={p.display_name} />
+    </>
+  );
 }
 
 /** Each portfolio section, rendered in the order (and only if) the member chose it. */

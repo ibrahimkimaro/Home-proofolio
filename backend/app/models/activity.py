@@ -26,6 +26,9 @@ class Notification(Base):
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     link: Mapped[str | None] = mapped_column(String(300), nullable=True)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set for admin messages: which one this came from, and when it first reached the member's device.
+    broadcast_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("broadcasts.id", ondelete="SET NULL"), nullable=True, index=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
@@ -67,4 +70,8 @@ class Broadcast(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     recipients: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     delivery: Mapped[str] = mapped_column(String(20), nullable=False)  # delivered (in-app) | manual (SMS/email until a provider is connected)
+    # Emails that could not be delivered (email channel only).
+    failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # The members picked, when segment is "selected".
+    user_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

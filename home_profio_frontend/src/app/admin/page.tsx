@@ -18,17 +18,21 @@ import {
   logoutUser,
 } from "@/lib/api";
 import { AdminLoginGate } from "@/components/admin/AdminLoginGate";
-import { adoptAccountAppearance, type Appearance } from "@/lib/appearance";
+import { adoptAccountAppearance, forgetAdoptedAppearance, type Appearance } from "@/lib/appearance";
+import { LogoutModal } from "@/components/app/LogoutModal";
 import { AdminShell, NAV, type AdminSection } from "@/components/admin/AdminShell";
 import { OverviewSection } from "@/components/admin/OverviewSection";
 import { UsersSection } from "@/components/admin/UsersSection";
 import { WorksSection } from "@/components/admin/WorksSection";
 import { SecuritySection } from "@/components/admin/SecuritySection";
 import { AnalyticsSection } from "@/components/admin/AnalyticsSection";
+import { AiSection } from "@/components/admin/AiSection";
+import { AiMonitoringSection } from "@/components/admin/AiMonitoringSection";
 import { OnboardingSection } from "@/components/admin/OnboardingSection";
 import { AuditSection, BusinessesSection, PlatformSection, TemplatesSection } from "@/components/admin/ManageSections";
 import { SupportSection } from "@/components/admin/SupportSection";
 import { ChatNotifier, unreadTotal, useChatInbox } from "@/components/chat/ChatNotifier";
+import { CallOverlay } from "@/components/chat/CallOverlay";
 import { ChatSection } from "@/components/admin/ChatSection";
 import { DevicesSection, HealthSection, MessagesSection, ThreatsSection } from "@/components/admin/MonitorSections";
 
@@ -58,6 +62,7 @@ export default function AdminPage() {
 
   async function handleAdminLogout() {
     await logoutUser().catch(() => {});
+    forgetAdoptedAppearance();
     setAdminUser(null);
     setAuthStatus("login");
   }
@@ -91,6 +96,7 @@ function AdminDashboard({ admin, onLogout }: { admin: User; onLogout: () => void
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [logoutModalOpen, setLogoutModalOpen] = useState(false);
 
   // Section lives in the URL hash so refresh/back keep your place.
   useEffect(() => {
@@ -145,7 +151,7 @@ function AdminDashboard({ admin, onLogout }: { admin: User; onLogout: () => void
       onNavigate={navigate}
       counts={{ users: users.length, works: works.length, security: otps.length, support: unreadTotal(inbox) }}
       admin={admin}
-      onLogout={onLogout}
+      onLogout={() => setLogoutModalOpen(true)}
       onRefresh={refresh}
       refreshing={refreshing}
       lastUpdated={lastUpdated}
@@ -169,6 +175,8 @@ function AdminDashboard({ admin, onLogout }: { admin: User; onLogout: () => void
       {section === "works" && <WorksSection works={works} onChanged={loadData} onError={setError} />}
       {section === "security" && <SecuritySection otps={otps} onChanged={loadData} onError={setError} />}
       {section === "analytics" && <AnalyticsSection onError={setError} />}
+      {section === "ai" && <AiSection onError={setError} />}
+      {section === "ai_monitoring" && <AiMonitoringSection onError={setError} />}
       {section === "onboarding" && <OnboardingSection onError={setError} />}
       {section === "templates" && <TemplatesSection onError={setError} />}
       {section === "businesses" && <BusinessesSection onError={setError} />}
@@ -181,6 +189,18 @@ function AdminDashboard({ admin, onLogout }: { admin: User; onLogout: () => void
       {section === "support" && <SupportSection admin={admin} onError={setError} />}
       {section === "chat" && <ChatSection admin={admin} onError={setError} />}
       <ChatNotifier userId={admin.id} />
+      <CallOverlay userId={admin.id} />
+
+      <LogoutModal
+        isOpen={logoutModalOpen}
+        user={admin}
+        onClose={() => setLogoutModalOpen(false)}
+        onConfirm={async (feedback) => {
+          await logoutUser(feedback).catch(() => {});
+          forgetAdoptedAppearance();
+          onLogout();
+        }}
+      />
     </AdminShell>
   );
 }

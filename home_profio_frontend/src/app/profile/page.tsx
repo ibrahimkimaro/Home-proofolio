@@ -15,12 +15,12 @@ import {
   type Work,
 } from "@/lib/api";
 import { KINDS, isPublic, kindOf } from "@/lib/items";
-import { AppShell, Avatar, useSession } from "@/components/app/AppShell";
+import { AppShell, AppShellSkeleton, Avatar, useSession } from "@/components/app/AppShell";
 import { BusinessesPanel, RolesPanel } from "@/components/app/RolesPanel";
 
 export default function ProfilePage() {
   const [user, setUser] = useSession();
-  if (!user) return <div className="min-h-screen bg-paper-dim" />;
+  if (!user) return <AppShellSkeleton />;
   return (
     <AppShell user={user}>
       <ProfileEditor user={user} onProfile={(profile) => setUser({ ...user, profile })} />
@@ -135,10 +135,12 @@ function ProfileEditor({ user, onProfile }: { user: User; onProfile: (p: Profile
     "h-12 w-full rounded-xl border border-hairline bg-paper px-4 text-[15px] outline-none transition-colors focus:border-ink/40";
 
   return (
-    <div className="mx-auto w-full max-w-full px-4 pt-6 sm:px-6 md:pt-10">
-      <div className="grid gap-4 lg:grid-cols-12">
-        {/* Identity + edit form */}
-        <div className="space-y-4 lg:col-span-8">
+    <div className="mx-auto w-full max-w-full px-2 pt-6 sm:px-3">
+      <div className="grid min-w-0 gap-4 lg:grid-cols-12">
+        {/* Identity + edit form. min-w-0 on both columns: grid items default to
+            min-width:auto, so long unbreakable content (usernames, links) otherwise forces
+            the column wider than the screen and the card gets clipped. */}
+        <div className="min-w-0 space-y-4 lg:col-span-8">
           <form onSubmit={save} className="overflow-hidden pf-surface rounded-2xl border border-hairline/50 bg-paper">
             <div className="h-28 cover-mono sm:h-36" />
             <div className="px-5 pb-6 sm:px-8">
@@ -224,7 +226,9 @@ function ProfileEditor({ user, onProfile }: { user: User; onProfile: (p: Profile
                       )}
                     </p>
                   )}
-                  <p className="mt-2 truncate text-[13px] text-slate">Your link: {publicUrl.replace(p.username, form.username.trim().toLowerCase() || p.username)}</p>
+                  <p className="mt-2 truncate text-[13px] text-slate">
+                    Your link: {publicUrl.replace(p.username, form.username.trim().toLowerCase() || p.username)}
+                  </p>
                 </Field>
               </div>
 
@@ -252,7 +256,7 @@ function ProfileEditor({ user, onProfile }: { user: User; onProfile: (p: Profile
         </div>
 
         {/* Visibility, sharing, published work */}
-        <div className="space-y-4 lg:col-span-4">
+        <div className="min-w-0 space-y-4 lg:col-span-4">
           <section className="pf-surface rounded-2xl border border-hairline/50 bg-paper p-5">
             <h2 className="mb-3 text-[15px] font-semibold">Who can see your profile</h2>
             <div className="space-y-1.5" role="radiogroup" aria-label="Profile visibility">

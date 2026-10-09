@@ -1,15 +1,19 @@
+import asyncio
+import logging
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Body, Cookie, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import UNSENT_TTL, SESSION_COOKIE_NAME, get_current_user, purge_unverified
+from app.api.deps import CODE_TTL, UNSENT_TTL, SESSION_COOKIE_NAME, get_current_user, purge_unverified, start_activation_clock
 from app.core import throttle
-from app.core.database import get_db
+from app.core.database import AsyncSessionLocal, get_db
+from app.services import mailer, realtime, webpush
 from app.services.activity import client_ip, device_name, notify, record
 from app.services.platform import get_setting
 from app.core.security import (
@@ -26,6 +30,7 @@ from app.models.user import User
 from app.schemas.auth import (
     USERNAME_RE,
     LoginRequest,
+    LogoutRequest,
     RegisterRequest,
     ActivationStatus,
     UserOut,
@@ -62,7 +67,9 @@ async def _create_session_cookie(response: Response, db: AsyncSession, user_id, 
 
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-async def register(payload: RegisterRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+async def register(
+    payload: RegisterRequest, request: Request, response: Response, background: BackgroundTasks, db: AsyncSession = Depends(get_db)
+):
     reg = await get_setting(db, "registration")
     if not reg.get("open", True):
         raise HTTPException(status.HTTP_403_FORBIDDEN, reg.get("closed_message") or "Sign-ups are closed")
@@ -90,7 +97,9 @@ async def register(payload: RegisterRequest, request: Request, response: Respons
         phone_number=phone,
         otp_pending=True,
     )
-    db.add(_new_code(user, "phone" if phone else "email"))
+    # With email sending set up the code goes to their inbox by itself; otherwise an admin delivers it by hand.
+    code = _new_code(user, "email" if mailer.configured() or not phone else "phone")
+    db.add(code)
     # BR-01: nothing is public without an explicit member action.
     user.profile = Profile(
         username=payload.username, display_name=resolved_display_name, visibility=Visibility.PRIVATE
@@ -106,6 +115,8 @@ async def register(payload: RegisterRequest, request: Request, response: Respons
         select(User).options(selectinload(User.profile)).where(User.id == user.id)
     )
     user = result.scalar_one()
+    if code.channel == "email" and mailer.configured():
+        background.add_task(_email_code, code.id)
     record(db, "signup", request, user_id=user.id, email=user.email)
     await _create_session_cookie(response, db, user.id, request)
     return user
@@ -215,6 +226,7 @@ RESEND_COOLDOWN_S = 30
 def _new_code(user: User, channel: str) -> OtpLog:
     """An activation code for the account's own phone or email, queued for an admin to deliver."""
     return OtpLog(
+        id=uuid.uuid4(),  # known up front, so the background email can find it
         user=user,
         destination=user.phone_number if channel == "phone" else user.email,
         channel=channel,
@@ -223,6 +235,37 @@ def _new_code(user: User, channel: str) -> OtpLog:
         delivery_status="awaiting_admin",
         expires_at=datetime.now(timezone.utc) + UNSENT_TTL,
     )
+
+
+log = logging.getLogger(__name__)
+
+
+async def _email_code(otp_id: uuid.UUID) -> None:
+    """Email an activation code, and once it has gone out start its 15-minute clock.
+    If email isn't possible the code stays "awaiting_admin", so an admin can still deliver it by hand."""
+    async with AsyncSessionLocal() as db:
+        otp = await db.get(OtpLog, otp_id)
+        user = await db.get(User, otp.user_id) if otp and otp.user_id else None
+        if not otp or not user or otp.channel != "email" or otp.is_verified or otp.expires_at <= datetime.now(timezone.utc):
+            return
+        mail = mailer.code_mail(otp.destination, user.fullname, otp.code, int(CODE_TTL.total_seconds() // 60))
+    result = (await asyncio.to_thread(mailer.send_many, [mail]))[0]
+    if result:
+        log.warning("activation email not sent (%s): the code stays with the admins to deliver", result)
+        return
+    async with AsyncSessionLocal() as db:
+        otp = await db.get(OtpLog, otp_id)
+        now = datetime.now(timezone.utc)
+        if otp and not otp.is_verified and otp.expires_at > now:  # skip if a newer code replaced it meanwhile
+            otp.delivery_status = "sent"
+            otp.sent_via = "email"
+            otp.expires_at = now + CODE_TTL
+            await start_activation_clock(db, otp.user_id)
+            notify(db, otp.user_id, "activation", "Your activation code is here",
+                   "Enter it within 15 minutes to activate your account.", "/home")
+            await db.commit()
+            await webpush.push_to_users([otp.user_id], {"title": "Your activation code is here", "body": "Enter it within 15 minutes to activate your account.", "url": "/home", "tag": "activation"}, "activation")
+            await realtime.push([realtime.to_user(otp.user_id, "notifications_changed")])
 
 
 async def _live_code(db: AsyncSession, user: User) -> OtpLog | None:
@@ -238,8 +281,9 @@ async def _live_code(db: AsyncSession, user: User) -> OtpLog | None:
     )
 
 
-def _status(otp: OtpLog) -> ActivationStatus:
+def _status(otp: OtpLog, user: User | None = None) -> ActivationStatus:
     now = datetime.now(timezone.utc)
+    deadline = user.activation_deadline if user else None
     sent = otp.delivery_status == "sent"
     return ActivationStatus(
         channel="email" if otp.channel == "email" else "phone",
@@ -247,6 +291,7 @@ def _status(otp: OtpLog) -> ActivationStatus:
         sent=sent,
         expires_in_seconds=max(0, int((otp.expires_at - now).total_seconds())) if sent else None,
         resend_in_seconds=max(0, RESEND_COOLDOWN_S - int((now - otp.created_at).total_seconds())),
+        suspends_in_seconds=max(0, int((deadline - now).total_seconds())) if deadline else None,
     )
 
 
@@ -256,12 +301,15 @@ async def activation_status(db: AsyncSession = Depends(get_db), current_user: Us
     if not current_user.otp_pending:
         return None
     otp = await _live_code(db, current_user)
-    return _status(otp) if otp else None
+    return _status(otp, current_user) if otp else None
 
 
 @router.post("/verify-account/send", response_model=ActivationStatus)
 async def send_activation_code(
-    payload: SendCodeRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)
+    payload: SendCodeRequest,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Ask for a new code. It replaces any earlier one, so admins never deliver a stale code."""
     if not current_user.otp_pending:
@@ -291,9 +339,12 @@ async def send_activation_code(
     )
     otp = _new_code(current_user, payload.channel)
     db.add(otp)
+    code_id = otp.id
     await db.commit()
     await db.refresh(otp)
-    return _status(otp)
+    if otp.channel == "email" and mailer.configured():
+        background.add_task(_email_code, code_id)
+    return _status(otp, current_user)
 
 
 @router.post("/verify-account", response_model=UserOut)
@@ -324,6 +375,7 @@ async def verify_account(
         otp.is_verified = True
         otp.verified_at = datetime.now(timezone.utc)
         current_user.otp_pending = False
+        current_user.activation_deadline = None
         throttle.clear(key)
         notify(db, current_user.id, "activated", "Your account is active",
                "You can now publish your work and make your profile public.", "/profile")
@@ -338,10 +390,27 @@ async def verify_account(
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
     response: Response,
+    request: Request,
+    payload: LogoutRequest | None = Body(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
 ):
+    if payload and (payload.rating is not None or payload.feedback):
+        record(
+            db,
+            "logout_feedback",
+            request,
+            user_id=current_user.id,
+            email=current_user.email,
+            details={
+                "rating": payload.rating,
+                "feedback": payload.feedback[:1000] if payload.feedback else None,
+            },
+        )
+    else:
+        record(db, "logout", request, user_id=current_user.id, email=current_user.email)
+
     await db.execute(
         SessionModel.__table__.delete().where(
             SessionModel.token_hash == hash_session_token(session_token)

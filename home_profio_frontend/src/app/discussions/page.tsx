@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   MessageSquare,
   Plus,
@@ -20,139 +21,19 @@ import {
   Users,
   ArrowRight,
   CheckCircle2,
+  Loader2,
+  Trash2,
 } from "lucide-react";
-import { AppShell, useSession } from "@/components/app/AppShell";
-
-interface ReplyItem {
-  id: string;
-  author: string;
-  role: string;
-  text: string;
-  time: string;
-}
-
-interface DiscussionThread {
-  id: string;
-  title: string;
-  content: string;
-  category: "tech" | "design" | "health" | "sports" | "general";
-  categoryLabel: string;
-  accessType: "open" | "invited";
-  invitedUsers?: string[];
-  author: {
-    name: string;
-    role: string;
-    avatar?: string;
-  };
-  upvotes: number;
-  replies: number;
-  tags: string[];
-  createdAt: string;
-  repliesList: ReplyItem[];
-}
-
-const INITIAL_DISCUSSIONS: DiscussionThread[] = [
-  {
-    id: "d1",
-    title: "How do you verify proof of deployment in complex microservices architectures?",
-    content: "When deploying Kubernetes clusters and distributed async workers, what artifacts do you attach in your portfolio as concrete proof of work without exposing internal secrets?",
-    category: "tech",
-    categoryLabel: "Engineering",
-    accessType: "open",
-    author: {
-      name: "Ibrahim kimaro",
-      role: "Lead Software Architect",
-    },
-    upvotes: 42,
-    replies: 2,
-    tags: ["DevOps", "Microservices", "Proof Verification"],
-    createdAt: "2h ago",
-    repliesList: [
-      {
-        id: "r1",
-        author: "Tamim hamis",
-        role: "Healthcare Systems Lead",
-        text: "We scrub sensitive credentials and export sanitized Prometheus latency graphs + redacted Terraform manifests as cryptographic proofs.",
-        time: "1h ago",
-      },
-      {
-        id: "r2",
-        author: "Admin",
-        role: "Platform Administrator",
-        text: "Architecture diagrams alongside audit log hashes make the story very compelling to reviewing clients.",
-        time: "30m ago",
-      },
-    ],
-  },
-  {
-    id: "d2",
-    title: "Displaying client brand identity assets: vector deliverables vs interactive style guides",
-    content: "For graphic designers presenting rebrands, do clients and recruiters prefer seeing the Figma component system or real-world mockups with production proofs?",
-    category: "design",
-    categoryLabel: "Design",
-    accessType: "open",
-    author: {
-      name: "Ibrahim kimaro",
-      role: "Lead Software Architect",
-    },
-    upvotes: 28,
-    replies: 1,
-    tags: ["Branding", "UI/UX", "Portfolio Tips"],
-    createdAt: "5h ago",
-    repliesList: [
-      {
-        id: "r3",
-        author: "Tamim hamis",
-        role: "Healthcare Systems Lead",
-        text: "Interactive prototypes show real UX reasoning, whereas static vectors only show aesthetics. I always prefer seeing the interactive flow.",
-        time: "4h ago",
-      },
-    ],
-  },
-  {
-    id: "d3",
-    title: "TMDA compliance and inventory tracking for community pharmacies",
-    content: "Roundtable discussion on showcasing pharmaceutical operations and verified clinical consultations while maintaining patient confidentiality.",
-    category: "health",
-    categoryLabel: "Health & Pharma",
-    accessType: "invited",
-    invitedUsers: ["Tamim hamis", "Ibrahim kimaro", "Admin"],
-    author: {
-      name: "Tamim hamis",
-      role: "Supervising Doctor",
-    },
-    upvotes: 35,
-    replies: 1,
-    tags: ["Pharmacy", "Compliance", "Healthcare"],
-    createdAt: "1d ago",
-    repliesList: [
-      {
-        id: "r4",
-        author: "Tamim hamis",
-        role: "Supervising Doctor",
-        text: "Focusing on batch FIFO audit trails is the most compliant verification method that protects individual patient identities.",
-        time: "18h ago",
-      },
-    ],
-  },
-  {
-    id: "d4",
-    title: "Tracking match metrics: goals, assists, and video footage proof for scouting",
-    content: "How amateur and professional athletes are structuring season statistics to land international trials and academy placements.",
-    category: "sports",
-    categoryLabel: "Sports",
-    accessType: "open",
-    author: {
-      name: "Ibrahim kimaro",
-      role: "Performance Scout & Athlete",
-    },
-    upvotes: 19,
-    replies: 0,
-    tags: ["Football", "Analytics", "Athletic Proof"],
-    createdAt: "2d ago",
-    repliesList: [],
-  },
-];
+import { AppShell, Avatar, useSession } from "@/components/app/AppShell";
+import {
+  fetchDiscussions,
+  fetchDiscussion,
+  createDiscussion,
+  postDiscussionReply,
+  toggleDiscussionVote,
+  deleteDiscussion,
+  type DiscussionThreadItem,
+} from "@/lib/api";
 
 const CATEGORIES = [
   { id: "all", label: "All Topics" },
@@ -165,12 +46,28 @@ const CATEGORIES = [
 
 export default function DiscussionsPage() {
   const [user] = useSession();
-  const [threads, setThreads] = useState<DiscussionThread[]>(INITIAL_DISCUSSIONS);
+  if (!user) return <div className="min-h-screen bg-paper-dim" />;
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-paper-dim" />}>
+      <DiscussionsContent user={user} />
+    </Suspense>
+  );
+}
+
+function DiscussionsContent({ user }: { user: any }) {
+  const searchParams = useSearchParams();
+  const threadIdParam = searchParams.get("thread");
+
+  const [threads, setThreads] = useState<DiscussionThreadItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [accessFilter, setAccessFilter] = useState<"all" | "open" | "invited">("all");
   const [search, setSearch] = useState("");
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
-  const [activeThread, setActiveThread] = useState<DiscussionThread | null>(null);
+  const [activeThread, setActiveThread] = useState<DiscussionThreadItem | null>(null);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [isPostingReply, setIsPostingReply] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [replyText, setReplyText] = useState("");
 
   // New Thread Form State
@@ -180,7 +77,34 @@ export default function DiscussionsPage() {
   const [newAccessType, setNewAccessType] = useState<"open" | "invited">("open");
   const [newInvitedUsers, setNewInvitedUsers] = useState("");
   const [newTags, setNewTags] = useState("");
-  const [upvotedSet, setUpvotedSet] = useState<Set<string>>(new Set());
+
+  // Load threads from backend
+  const loadThreads = () => {
+    setIsLoading(true);
+    fetchDiscussions({
+      category: selectedCategory,
+      access_type: accessFilter,
+      search: search.trim() || undefined,
+    })
+      .then((data) => setThreads(data))
+      .catch((err) => console.error("Could not fetch discussions:", err))
+      .finally(() => setIsLoading(false));
+  };
+
+  useEffect(() => {
+    loadThreads();
+  }, [selectedCategory, accessFilter, search]);
+
+  // Load thread detail if param is provided
+  useEffect(() => {
+    if (threadIdParam) {
+      setIsLoadingDetail(true);
+      fetchDiscussion(threadIdParam)
+        .then((detail) => setActiveThread(detail))
+        .catch(() => {})
+        .finally(() => setIsLoadingDetail(false));
+    }
+  }, [threadIdParam]);
 
   useEffect(() => {
     const handleOpen = () => setIsNewModalOpen(true);
@@ -188,100 +112,108 @@ export default function DiscussionsPage() {
     return () => window.removeEventListener("open-new-discussion", handleOpen);
   }, []);
 
-  if (!user) return <div className="min-h-screen bg-paper-dim" />;
-
-  const toggleUpvote = (id: string) => {
-    setUpvotedSet((prev) => {
-      const next = new Set(prev);
-      const isUpvoted = next.has(id);
-      if (isUpvoted) {
-        next.delete(id);
-        setThreads((ts) => ts.map((t) => (t.id === id ? { ...t, upvotes: t.upvotes - 1 } : t)));
-      } else {
-        next.add(id);
-        setThreads((ts) => ts.map((t) => (t.id === id ? { ...t, upvotes: t.upvotes + 1 } : t)));
-      }
-      return next;
-    });
+  const handleOpenThread = (t: DiscussionThreadItem) => {
+    setActiveThread(t);
+    setIsLoadingDetail(true);
+    fetchDiscussion(t.id)
+      .then((detail) => setActiveThread(detail))
+      .catch(() => {})
+      .finally(() => setIsLoadingDetail(false));
   };
 
-  const handleCreateThread = (e: React.FormEvent) => {
+  const toggleUpvote = async (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    try {
+      const res = await toggleDiscussionVote(id);
+      setThreads((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, upvotes: res.upvotes, hasVoted: res.hasVoted } : t))
+      );
+      if (activeThread?.id === id) {
+        setActiveThread((prev) =>
+          prev ? { ...prev, upvotes: res.upvotes, hasVoted: res.hasVoted } : null
+        );
+      }
+    } catch (err) {
+      console.error("Upvote failed:", err);
+    }
+  };
+
+  const handleCreateThread = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim() || !newContent.trim()) return;
-
-    const catLabel =
-      CATEGORIES.find((c) => c.id === newCategory)?.label || "General";
 
     const invitedList =
       newAccessType === "invited" && newInvitedUsers.trim()
         ? newInvitedUsers.split(",").map((s) => s.trim()).filter(Boolean)
         : undefined;
 
-    const created: DiscussionThread = {
-      id: `d-${Date.now()}`,
-      title: newTitle.trim(),
-      content: newContent.trim(),
-      category: newCategory,
-      categoryLabel: catLabel,
-      accessType: newAccessType,
-      invitedUsers: invitedList,
-      author: {
-        name: user.profile?.display_name || user.username || user.email || "Proofolio Member",
-        role: user.profile?.headline || "Proofolio Member",
-      },
-      upvotes: 1,
-      replies: 0,
-      tags: newTags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean),
-      createdAt: "Just now",
-      repliesList: [],
-    };
+    const tagList = newTags
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
 
-    setThreads([created, ...threads]);
-    setIsNewModalOpen(false);
-    setNewTitle("");
-    setNewContent("");
-    setNewTags("");
-    setNewAccessType("open");
-    setNewInvitedUsers("");
+    setIsSubmitting(true);
+    try {
+      const created = await createDiscussion({
+        title: newTitle.trim(),
+        content: newContent.trim(),
+        category: newCategory,
+        access_type: newAccessType,
+        invited_users: invitedList,
+        tags: tagList,
+      });
+
+      setThreads([created, ...threads]);
+      setIsNewModalOpen(false);
+      setNewTitle("");
+      setNewContent("");
+      setNewTags("");
+      setNewAccessType("open");
+      setNewInvitedUsers("");
+    } catch (err) {
+      console.error("Failed to create discussion:", err);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleAddReply = (e: React.FormEvent) => {
+  const handleAddReply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeThread || !replyText.trim()) return;
 
-    const newReply: ReplyItem = {
-      id: `r-${Date.now()}`,
-      author: user.profile?.display_name || user.username || user.email || "Proofolio Member",
-      role: user.profile?.headline || "Proofolio Member",
-      text: replyText.trim(),
-      time: "Just now",
-    };
+    setIsPostingReply(true);
+    try {
+      const newReply = await postDiscussionReply(activeThread.id, replyText.trim());
+      const updatedReplies = [...(activeThread.repliesList || []), newReply];
+      const updated = {
+        ...activeThread,
+        replies: (activeThread.replies || 0) + 1,
+        repliesList: updatedReplies,
+      };
 
-    const updated = {
-      ...activeThread,
-      replies: activeThread.replies + 1,
-      repliesList: [...activeThread.repliesList, newReply],
-    };
-
-    setActiveThread(updated);
-    setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-    setReplyText("");
+      setActiveThread(updated);
+      setThreads((prev) => prev.map((t) => (t.id === updated.id ? { ...t, replies: updated.replies } : t)));
+      setReplyText("");
+    } catch (err) {
+      console.error("Failed to add reply:", err);
+    } finally {
+      setIsPostingReply(false);
+    }
   };
 
-  const filtered = threads.filter((t) => {
-    const matchCat = selectedCategory === "all" || t.category === selectedCategory;
-    const matchAccess = accessFilter === "all" || t.accessType === accessFilter;
-    const q = search.toLowerCase();
-    const matchSearch =
-      !q ||
-      t.title.toLowerCase().includes(q) ||
-      t.content.toLowerCase().includes(q) ||
-      t.tags.some((tag) => tag.toLowerCase().includes(q));
-    return matchCat && matchAccess && matchSearch;
-  });
+  const handleDeleteThread = async (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!confirm("Are you sure you want to delete this discussion?")) return;
+    try {
+      await deleteDiscussion(id);
+      setThreads((prev) => prev.filter((t) => t.id !== id));
+      if (activeThread?.id === id) setActiveThread(null);
+    } catch (err) {
+      console.error("Delete discussion failed:", err);
+    }
+  };
+
+  const filtered = threads;
 
   return (
     <AppShell user={user}>
@@ -385,100 +317,135 @@ export default function DiscussionsPage() {
 
         {/* Discussions List */}
         <div className="space-y-4">
-          {filtered.map((thread) => {
-            const isUpvoted = upvotedSet.has(thread.id);
-            return (
-              <article
-                key={thread.id}
-                className="p-5 sm:p-6 rounded-2xl border border-hairline bg-paper hover:border-ink/30 transition-all duration-200 shadow-2xs space-y-3.5"
+          {isLoading ? (
+            <div className="py-16 text-center text-slate flex flex-col items-center justify-center gap-3 bg-paper rounded-2xl border border-hairline">
+              <Loader2 className="w-6 h-6 animate-spin text-sky-500" />
+              <span className="text-sm">Loading verified discussions...</span>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="py-16 text-center text-slate bg-paper rounded-2xl border border-hairline p-8 space-y-3">
+              <MessageSquare className="w-8 h-8 mx-auto text-slate/50" />
+              <p className="text-sm font-medium text-ink">No discussions found matching your filter.</p>
+              <button
+                type="button"
+                onClick={() => setIsNewModalOpen(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-ink text-paper text-xs font-semibold hover:opacity-90 transition cursor-pointer"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="space-y-1.5 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-paper-dim text-ink-900 uppercase">
-                        {thread.categoryLabel}
-                      </span>
-                      {thread.accessType === "open" ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-500/10 text-emerald-700 border border-emerald-500/20">
-                          <Globe className="w-3 h-3" /> Open to Everyone
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-500/10 text-amber-700 border border-amber-500/20">
-                          <Lock className="w-3 h-3" /> Invited Circle
-                          {thread.invitedUsers?.length ? ` (${thread.invitedUsers.length} members)` : ""}
-                        </span>
-                      )}
-                      <span className="text-xs text-slate">· {thread.createdAt}</span>
-                    </div>
-
-                    <h2
-                      onClick={() => setActiveThread(thread)}
-                      className="text-base sm:text-lg font-bold text-ink-900 hover:text-blue-600 transition-colors cursor-pointer"
-                    >
-                      {thread.title}
-                    </h2>
-                  </div>
-                </div>
-
-                <p
-                  onClick={() => setActiveThread(thread)}
-                  className="text-sm text-slate leading-relaxed cursor-pointer line-clamp-3 sm:line-clamp-none"
+                <Plus className="w-3.5 h-3.5" /> Start a Discussion
+              </button>
+            </div>
+          ) : (
+            filtered.map((thread) => {
+              const isUpvoted = Boolean(thread.hasVoted);
+              const isOwner = user?.username === thread.author.username || user?.is_admin;
+              return (
+                <article
+                  key={thread.id}
+                  className="p-5 sm:p-6 rounded-2xl border border-hairline bg-paper hover:border-ink/30 transition-all duration-200 shadow-2xs space-y-3.5"
                 >
-                  {thread.content}
-                </p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1.5 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-paper-dim text-ink-900 uppercase">
+                          {thread.categoryLabel || thread.category}
+                        </span>
+                        {thread.accessType === "open" ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-500/10 text-emerald-700 border border-emerald-500/20">
+                            <Globe className="w-3 h-3" /> Open to Everyone
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-500/10 text-amber-700 border border-amber-500/20">
+                            <Lock className="w-3 h-3" /> Invited Circle
+                            {thread.invitedUsers?.length ? ` (${thread.invitedUsers.length} members)` : ""}
+                          </span>
+                        )}
+                        <span className="text-xs text-slate">· {new Date(thread.createdAt).toLocaleDateString()}</span>
+                      </div>
 
-                {thread.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {thread.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-paper-dim text-slate"
+                      <h2
+                        onClick={() => handleOpenThread(thread)}
+                        className="text-base sm:text-lg font-bold text-ink-900 hover:text-sky-600 transition-colors cursor-pointer"
                       >
-                        <Tag className="w-3 h-3" />
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {/* Footer metadata & buttons */}
-                <div className="flex items-center justify-between pt-3.5 border-t border-hairline text-xs">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-ink text-paper flex items-center justify-center font-bold text-[10px]">
-                      {thread.author.name[0]}
+                        {thread.title}
+                      </h2>
                     </div>
-                    <span className="font-semibold text-ink-900">{thread.author.name}</span>
-                    <span className="text-slate hidden sm:inline">· {thread.author.role}</span>
+
+                    {isOwner && (
+                      <button
+                        type="button"
+                        onClick={(e) => handleDeleteThread(thread.id, e)}
+                        title="Delete discussion"
+                        className="p-1.5 rounded-lg text-slate hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => toggleUpvote(thread.id)}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
-                        isUpvoted
-                          ? "border-blue-600 bg-blue-50 text-blue-600 dark:bg-blue-950/40"
-                          : "border-hairline text-slate hover:text-ink-900 hover:bg-paper-dim"
-                      }`}
-                    >
-                      <ThumbsUp className="w-3.5 h-3.5" />
-                      <span className="font-mono">{thread.upvotes}</span>
-                    </button>
+                  <p
+                    onClick={() => handleOpenThread(thread)}
+                    className="text-sm text-slate leading-relaxed cursor-pointer line-clamp-3 sm:line-clamp-none"
+                  >
+                    {thread.content}
+                  </p>
 
-                    <button
-                      type="button"
-                      onClick={() => setActiveThread(thread)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-hairline text-ink-900 bg-paper hover:bg-paper-dim text-xs font-semibold cursor-pointer"
-                    >
-                      <MessageCircle className="w-3.5 h-3.5" />
-                      <span>{thread.replies} Replies</span>
-                      <span className="hidden sm:inline">&rarr; Join</span>
-                    </button>
+                  {thread.tags && thread.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {thread.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-paper-dim text-slate"
+                        >
+                          <Tag className="w-3 h-3" />
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Footer metadata & buttons */}
+                  <div className="flex items-center justify-between pt-3.5 border-t border-hairline text-xs">
+                    <div className="flex items-center gap-2">
+                      {thread.author.avatar ? (
+                        <Avatar name={thread.author.name} src={thread.author.avatar} className="w-6 h-6 text-[10px]" />
+                      ) : (
+                        <div className="w-6 h-6 rounded-full bg-ink text-paper flex items-center justify-center font-bold text-[10px]">
+                          {thread.author.name[0]}
+                        </div>
+                      )}
+                      <span className="font-semibold text-ink-900">{thread.author.name}</span>
+                      <span className="text-slate hidden sm:inline">· {thread.author.role}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => toggleUpvote(thread.id, e)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
+                          isUpvoted
+                            ? "border-sky-600 bg-sky-50 text-sky-600 dark:bg-sky-950/40"
+                            : "border-hairline text-slate hover:text-ink-900 hover:bg-paper-dim"
+                        }`}
+                      >
+                        <ThumbsUp className="w-3.5 h-3.5" />
+                        <span className="font-mono">{thread.upvotes}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenThread(thread)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-hairline text-ink-900 bg-paper hover:bg-paper-dim text-xs font-semibold cursor-pointer"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>{thread.replies} Replies</span>
+                        <span className="hidden sm:inline">&rarr; Join</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </article>
-            );
-          })}
+                </article>
+              );
+            })
+          )}
         </div>
       </div>
 
@@ -549,23 +516,28 @@ export default function DiscussionsPage() {
               {/* Replies Section */}
               <div className="space-y-3 pt-2">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate">
-                  Responses &amp; Perspectives ({activeThread.repliesList.length})
+                  Responses &amp; Perspectives ({(activeThread.repliesList || []).length})
                 </h3>
 
-                {activeThread.repliesList.length === 0 ? (
+                {isLoadingDetail ? (
+                  <div className="py-6 flex items-center justify-center gap-2 text-xs text-slate">
+                    <Loader2 className="w-4 h-4 animate-spin text-sky-500" />
+                    <span>Loading perspectives...</span>
+                  </div>
+                ) : (activeThread.repliesList || []).length === 0 ? (
                   <p className="text-xs text-slate italic py-2">
                     No responses yet. Be the first to share verified observations on this topic.
                   </p>
                 ) : (
                   <div className="space-y-2.5">
-                    {activeThread.repliesList.map((rep) => (
+                    {(activeThread.repliesList || []).map((rep) => (
                       <div
                         key={rep.id}
                         className="p-3.5 rounded-xl border border-hairline bg-paper space-y-1.5"
                       >
                         <div className="flex items-center justify-between text-xs">
                           <span className="font-bold text-ink-900">{rep.author}</span>
-                          <span className="text-[11px] text-slate">{rep.time}</span>
+                          <span className="text-[11px] text-slate">{new Date(rep.time).toLocaleDateString()}</span>
                         </div>
                         <p className="text-xs sm:text-sm text-slate leading-relaxed">
                           {rep.text}
@@ -592,9 +564,10 @@ export default function DiscussionsPage() {
               />
               <button
                 type="submit"
-                className="w-full sm:w-auto h-12 sm:h-11 px-5 rounded-xl bg-ink text-paper font-semibold text-sm hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                disabled={isPostingReply || !replyText.trim()}
+                className="w-full sm:w-auto h-12 sm:h-11 px-5 rounded-xl bg-ink text-paper font-semibold text-sm hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-50"
               >
-                <Send className="w-4 h-4" />
+                {isPostingReply ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                 Reply
               </button>
             </form>
@@ -740,9 +713,11 @@ export default function DiscussionsPage() {
                 </button>
                 <button
                   type="submit"
-                  className="w-full sm:w-auto px-6 h-12 sm:h-10 rounded-xl bg-ink text-paper text-sm font-semibold hover:opacity-90 active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                  disabled={isSubmitting}
+                  className="w-full sm:w-auto px-6 h-12 sm:h-10 rounded-xl bg-ink text-paper text-sm font-semibold hover:opacity-90 active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
                 >
-                  <Send className="w-4 h-4" /> Post Discussion
+                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  {isSubmitting ? "Publishing..." : "Post Discussion"}
                 </button>
               </div>
             </form>

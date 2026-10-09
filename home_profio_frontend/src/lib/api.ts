@@ -1,5 +1,23 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "/api";
 
+import {
+  clearAllAuthStorage,
+  getCachedUser,
+  isUserCacheFresh,
+  sanitizeUserForStorage,
+  setCachedUser,
+  updateCachedUser,
+} from "./user-cache";
+
+export {
+  clearAllAuthStorage,
+  getCachedUser,
+  isUserCacheFresh,
+  sanitizeUserForStorage,
+  setCachedUser,
+  updateCachedUser,
+};
+
 export class ApiError extends Error {
   status: number;
 
@@ -9,7 +27,34 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+// Fewer API calls. Several components often ask for the same thing at the same moment (who am I, platform
+// status, notifications): identical GETs in flight share one request, and a few lookups that rarely change are
+// reused for a few seconds. Any write (POST/PUT/PATCH/DELETE) forgets what was kept, so nothing goes stale.
+const inflight = new Map<string, Promise<unknown>>();
+const recent = new Map<string, { at: number; value: unknown }>();
+const REUSE_MS: Record<string, number> = { "/auth/me": 4_000, "/platform": 30_000, "/push/key": 300_000 };
+
+function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const plainGet = (options.method ?? "GET").toUpperCase() === "GET" && Object.keys(options).length === 0;
+  if (!plainGet) {
+    if ((options.method ?? "GET").toUpperCase() !== "GET") recent.clear();
+    return send<T>(path, options);
+  }
+  const kept = recent.get(path);
+  if (kept && Date.now() - kept.at < (REUSE_MS[path] ?? 0)) return Promise.resolve(kept.value as T);
+  const pending = inflight.get(path);
+  if (pending) return pending as Promise<T>;
+  const p = send<T>(path, options)
+    .then((value) => {
+      if (REUSE_MS[path]) recent.set(path, { at: Date.now(), value });
+      return value;
+    })
+    .finally(() => inflight.delete(path));
+  inflight.set(path, p);
+  return p;
+}
+
+async function send<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     credentials: "include",
@@ -27,7 +72,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         : Array.isArray(body.detail)
           ? body.detail.map((e: { msg: string }) => e.msg).join(", ")
           : res.statusText;
-    throw new ApiError(res.status, message);
+    // Not activated in time: everything but support is closed. The suspended page explains and offers the code.
+    if (res.status === 403 && message === "account_suspended" && typeof window !== "undefined" && window.location.pathname !== "/suspended") {
+      window.location.assign("/suspended");
+    }
+    throw new ApiError(res.status, message === "account_suspended" ? "Your account is suspended. Activate it to continue." : message);
   }
 
   if (res.status === 204) {
@@ -55,12 +104,15 @@ export interface User {
   is_admin?: boolean;
   /** Signed up with a phone and hasn't entered the OTP yet. */
   otp_pending?: boolean;
+  /** Not activated within 15 minutes of the code: only support (and entering a code) works. */
+  suspended?: boolean;
+  activation_deadline?: string | null;
   created_at: string;
   profile: Profile;
   preferences?: { appearance?: Record<string, string> };
 }
 
-export function registerUser(payload: {
+export async function registerUser(payload: {
   email: string;
   password: string;
   username: string;
@@ -68,19 +120,50 @@ export function registerUser(payload: {
   fullname?: string;
   phone_number?: string;
 }) {
-  return request<User>("/auth/register", { method: "POST", body: JSON.stringify(payload) });
+  const user = await request<User>("/auth/register", { method: "POST", body: JSON.stringify(payload) });
+  setCachedUser(user);
+  return user;
 }
 
-export function loginUser(payload: { email: string; password: string }) {
-  return request<User>("/auth/login", { method: "POST", body: JSON.stringify(payload) });
+export async function loginUser(payload: { email: string; password: string }) {
+  const user = await request<User>("/auth/login", { method: "POST", body: JSON.stringify(payload) });
+  setCachedUser(user);
+  return user;
 }
 
-export function logoutUser() {
-  return request<void>("/auth/logout", { method: "POST" });
+export interface LogoutFeedbackPayload {
+  rating?: number;
+  feedback?: string;
 }
 
-export function fetchCurrentUser() {
-  return request<User>("/auth/me");
+/** Sign out. This device stops notifications and completely purges all cached profile and session state. */
+export async function logoutUser(feedback?: LogoutFeedbackPayload) {
+  try {
+    await (await import("./push")).forgetThisDevice();
+  } catch {}
+  clearAllAuthStorage();
+  return request<void>("/auth/logout", {
+    method: "POST",
+    body: feedback ? JSON.stringify(feedback) : undefined,
+  });
+}
+
+/** Fetches current user, serving from secure client cache when fresh to eliminate redundant network hits. */
+export async function fetchCurrentUser(options?: { force?: boolean }): Promise<User> {
+  if (!options?.force && isUserCacheFresh()) {
+    const cached = getCachedUser({ allowStale: false });
+    if (cached) return cached;
+  }
+  try {
+    const user = await request<User>("/auth/me");
+    setCachedUser(user);
+    return user;
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+      clearAllAuthStorage();
+    }
+    throw err;
+  }
 }
 
 export interface UsernameCheckResult {
@@ -101,6 +184,18 @@ export interface OtpGenerateResponse {
   channel: string;
   code: string;
   expires_in_seconds: number;
+  /** emailed = went out by email; manual = waiting for an admin to send it. */
+  delivery: "emailed" | "manual";
+  /** The member this code is for, if the address or number belongs to exactly one. */
+  user_name: string | null;
+}
+
+export interface OtpRecipient {
+  id: string;
+  name: string;
+  username: string;
+  email: string;
+  phone: string | null;
 }
 
 /** Activate a suspended account. 400 = wrong code, 410 = code expired or cancelled (ask for a new one). */
@@ -115,6 +210,8 @@ export interface ActivationStatus {
   /** An admin has delivered it; the 15-minute countdown runs from then. */
   sent: boolean;
   expires_in_seconds: number | null;
+  /** Seconds until the account is suspended (set once the first code has gone out). */
+  suspends_in_seconds?: number | null;
   resend_in_seconds: number;
 }
 
@@ -146,6 +243,9 @@ export interface AdminUser {
   is_active: boolean;
   created_at: string;
   works_count: number;
+  headline?: string | null;
+  role?: string | null;
+  roles?: string[];
 }
 
 export interface AdminOtpLog {
@@ -156,6 +256,8 @@ export interface AdminOtpLog {
   purpose: string;
   is_verified: boolean;
   delivery_status: string;
+  /** "email" = the system emailed it, "admin" = sent by hand, null = not sent yet. */
+  sent_via: string | null;
   expires_at: string;
   created_at: string;
   verified_at: string | null;
@@ -173,7 +275,16 @@ export function fetchAdminOtps(limit = 50) {
   return request<AdminOtpLog[]>(`/admin/otps?limit=${limit}`);
 }
 
-export function updateAdminUser(id: string, payload: { is_active?: boolean; is_admin?: boolean }) {
+export function updateAdminUser(
+  id: string,
+  payload: {
+    is_active?: boolean;
+    is_admin?: boolean;
+    fullname?: string;
+    headline?: string;
+    role_title?: string;
+  }
+) {
   return request<AdminUser>(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
 }
 
@@ -208,19 +319,41 @@ export function deleteAdminWork(id: string) {
 }
 
 /** Admin has texted or emailed this code; the member's 15 minutes start now. */
+export function resendOtpEmail(id: string) {
+  return request<{ queued: boolean }>(`/admin/otps/${id}/email`, { method: "POST" });
+}
+
 export function markOtpSent(id: string) {
   return request<AdminOtpLog>(`/admin/otps/${id}/sent`, { method: "POST" });
 }
 
-export function simulateAdminOtp(payload: { destination: string; channel?: string; purpose?: string }) {
-  return request<OtpGenerateResponse>("/admin/otps/simulate", {
-    method: "POST",
-    body: JSON.stringify({
-      destination: payload.destination,
-      channel: payload.channel ?? "phone",
-      purpose: payload.purpose ?? "admin_test",
-    }),
-  });
+/** A code an admin sent this member (2FA sign-in, password change...), still waiting to be entered. */
+export interface MemberCode {
+  id: string;
+  purpose: string;
+  label: string;
+  channel: string;
+  /** Masked: i•••@gmail.com or •••• 123. */
+  destination: string;
+  expires_in_seconds: number;
+}
+export const fetchMyCodes = () => request<MemberCode[]>("/me/codes");
+export const verifyMyCode = (code: string) =>
+  request<{ verified: boolean; purpose: string; label: string }>("/me/codes/verify", { method: "POST", body: JSON.stringify({ code }) });
+
+// ---------- Web Push (backend app/api/push.py) ----------
+export const fetchPushKey = () => request<{ enabled: boolean; public_key: string | null }>("/push/key");
+export const subscribePush = (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
+  request<void>("/me/push/subscribe", { method: "POST", body: JSON.stringify(sub) });
+export const unsubscribePush = (endpoint: string) => request<void>("/me/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint }) });
+export const sendTestPush = () => request<{ sent: number }>("/me/push/test", { method: "POST" });
+
+export function sendAdminOtp(payload: { destination: string; channel: "email" | "phone"; purpose: string }) {
+  return request<OtpGenerateResponse>("/admin/otps/send", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function searchOtpRecipients(q: string) {
+  return request<OtpRecipient[]>(`/admin/otps/people?q=${encodeURIComponent(q)}`);
 }
 
 export type Visibility = "public" | "unlisted" | "private" | "draft";
@@ -319,16 +452,33 @@ export async function uploadFile(file: File): Promise<UploadResult> {
   return { url: data.path, name: data.name, content_type: data.content_type };
 }
 
-export function updateProfile(payload: Partial<Pick<Profile, "display_name" | "headline" | "bio" | "username" | "visibility" | "allow_indexing">>) {
-  return request<Profile>("/me/profile", { method: "PATCH", body: JSON.stringify(payload) });
+export async function updateProfile(payload: Partial<Pick<Profile, "display_name" | "headline" | "bio" | "username" | "visibility" | "allow_indexing">>) {
+  const profile = await request<Profile>("/me/profile", { method: "PATCH", body: JSON.stringify(payload) });
+  updateCachedUser((u) => ({
+    ...u,
+    fullname: profile.display_name || u.fullname,
+    username: profile.username || u.username,
+    profile: { ...u.profile, ...profile },
+  }));
+  return profile;
 }
 
-export function uploadAvatar(file: File) {
-  return postFile<Profile>("/me/avatar", file);
+export async function uploadAvatar(file: File) {
+  const profile = await postFile<Profile>("/me/avatar", file);
+  updateCachedUser((u) => ({
+    ...u,
+    profile: { ...u.profile, ...profile },
+  }));
+  return profile;
 }
 
-export function removeAvatar() {
-  return request<Profile>("/me/avatar", { method: "DELETE" });
+export async function removeAvatar() {
+  const profile = await request<Profile>("/me/avatar", { method: "DELETE" });
+  updateCachedUser((u) => ({
+    ...u,
+    profile: { ...u.profile, ...profile },
+  }));
+  return profile;
 }
 
 export type PortfolioSection = "about" | "experience" | "works" | "contact";
@@ -340,6 +490,20 @@ export interface PortfolioSettings {
   featured: string[];
   show_metrics: boolean;
   contact_email: string | null;
+  /** More emails, phone numbers and WhatsApp numbers shown on the portfolio. */
+  contacts: ContactItem[];
+  /** Social profiles (just the handle; the link is built from the platform). */
+  socials: SocialLink[];
+}
+
+export interface ContactItem {
+  kind: "email" | "phone" | "whatsapp";
+  value: string;
+  label: string | null;
+}
+export interface SocialLink {
+  platform: "instagram" | "tiktok" | "github" | "facebook" | "snapchat" | "threads" | "x" | "telegram" | "linkedin";
+  handle: string;
 }
 
 export const fetchPortfolio = () => request<PortfolioSettings>("/me/portfolio");
@@ -569,10 +733,111 @@ export interface SearchResults {
   }[];
   businesses?: { slug: string; name: string; type: BusinessType; description: string | null }[];
   skills?: { name: string; works: number }[];
+  discussions?: {
+    id: string;
+    title: string;
+    content: string;
+    category: string;
+    tags: string[];
+    created_at: string;
+    replies: number;
+    upvotes: number;
+    author: { name: string; username: string; avatar: string | null };
+  }[];
 }
 
-export function search(q: string, type: "all" | "people" | "work" | "businesses" | "skills" = "all") {
+export function search(q: string, type: "all" | "people" | "work" | "businesses" | "skills" | "discussions" = "all") {
   return request<SearchResults>(`/search?q=${encodeURIComponent(q)}&type=${type}`);
+}
+
+// ---------- discussions ----------
+
+export interface DiscussionThreadItem {
+  id: string;
+  title: string;
+  content: string;
+  category: "tech" | "design" | "health" | "sports" | "general";
+  categoryLabel: string;
+  accessType: "open" | "invited";
+  invitedUsers?: string[];
+  author: {
+    id?: string;
+    username?: string;
+    name: string;
+    role: string;
+    avatar?: string | null;
+  };
+  upvotes: number;
+  replies: number;
+  hasVoted?: boolean;
+  tags: string[];
+  createdAt: string;
+  updatedAt?: string;
+  repliesList?: {
+    id: string;
+    text: string;
+    author: string;
+    role: string;
+    avatar?: string | null;
+    username?: string;
+    userId?: string;
+    time: string;
+  }[];
+}
+
+export interface CreateDiscussionInput {
+  title: string;
+  content: string;
+  category: "tech" | "design" | "health" | "sports" | "general";
+  access_type: "open" | "invited";
+  invited_users?: string[];
+  tags?: string[];
+}
+
+export function fetchDiscussions(params?: { category?: string; access_type?: string; search?: string }) {
+  const sp = new URLSearchParams();
+  if (params?.category && params.category !== "all") sp.set("category", params.category);
+  if (params?.access_type && params.access_type !== "all") sp.set("access_type", params.access_type);
+  if (params?.search) sp.set("search", params.search);
+  const q = sp.toString();
+  return request<DiscussionThreadItem[]>(`/discussions${q ? `?${q}` : ""}`);
+}
+
+export function fetchDiscussion(id: string) {
+  return request<DiscussionThreadItem>(`/discussions/${id}`);
+}
+
+export function createDiscussion(input: CreateDiscussionInput) {
+  return request<DiscussionThreadItem>("/discussions", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function postDiscussionReply(discussionId: string, content: string) {
+  return request<{
+    id: string;
+    text: string;
+    author: string;
+    role: string;
+    avatar?: string | null;
+    username?: string;
+    userId?: string;
+    time: string;
+  }>(`/discussions/${discussionId}/replies`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+}
+
+export function toggleDiscussionVote(discussionId: string) {
+  return request<{ upvotes: number; hasVoted: boolean }>(`/discussions/${discussionId}/vote`, {
+    method: "POST",
+  });
+}
+
+export function deleteDiscussion(discussionId: string) {
+  return request<void>(`/discussions/${discussionId}`, { method: "DELETE" });
 }
 
 // ---------- settings ----------
@@ -622,6 +887,15 @@ export const deleteAccount = (password: string, confirm: string) =>
 
 export const saveAppearancePreference = (appearance: object) =>
   request<{ appearance?: object }>("/me/preferences", { method: "PUT", body: JSON.stringify({ appearance }) });
+
+// Settings > Privacy. show_phone_in_chat: people you chat with see your phone in Contact info (off by default).
+export interface PrivacyPrefs {
+  show_phone_in_chat: boolean;
+}
+export const fetchPrivacyPreference = () =>
+  request<{ privacy?: PrivacyPrefs | null }>("/me/preferences").then((p) => p.privacy ?? { show_phone_in_chat: false });
+export const savePrivacyPreference = (privacy: PrivacyPrefs) =>
+  request<{ privacy?: PrivacyPrefs }>("/me/preferences", { method: "PUT", body: JSON.stringify({ privacy }) });
 
 // ---------- onboarding (public) ----------
 
@@ -889,7 +1163,7 @@ export interface TrafficStats {
 export const fetchSystemHealth = () => request<SystemHealth>("/admin/system/health");
 
 export type BroadcastChannel = "in_app" | "sms" | "email";
-export type BroadcastSegment = "all" | "active" | "unactivated";
+export type BroadcastSegment = "all" | "active" | "unactivated" | "selected";
 export interface BroadcastContact {
   name: string;
   username: string;
@@ -904,24 +1178,55 @@ export interface BroadcastRow {
   subject: string;
   body: string;
   recipients: number;
-  delivery: "delivered" | "manual" | "sent";
+  /** delivered = in-app; sending/sent/partial/failed = email sent by the server; manual = SMS or email sent by hand. */
+  delivery: "delivered" | "manual" | "sending" | "sent" | "partial" | "failed";
   sent_by: string | null;
   created_at: string;
+  /** In-app messages are tracked per person; SMS and email are sent by hand and can't be. */
+  tracked: boolean;
+  delivered_count: number;
+  read_count: number;
+  /** Emails that couldn't be delivered. */
+  failed: number;
+}
+export interface BroadcastPerson {
+  id: string;
+  name: string;
+  username: string;
+  status: "sent" | "delivered" | "read";
+  delivered_at: string | null;
+  read_at: string | null;
+}
+export interface BroadcastReport {
+  tracked: boolean;
+  channel: BroadcastChannel;
+  total?: number;
+  delivered?: number;
+  read?: number;
+  recipients: BroadcastPerson[];
+}
+export interface MemberPick {
+  id: string;
+  name: string;
+  username: string;
+  email: string;
 }
 
-export const previewBroadcast = (channel: BroadcastChannel, segment: BroadcastSegment) =>
+export const previewBroadcast = (channel: BroadcastChannel, segment: BroadcastSegment, userIds: string[] = []) =>
   request<{ count: number; sample: BroadcastContact[] }>("/admin/broadcasts/preview", {
     method: "POST",
-    body: JSON.stringify({ channel, segment }),
+    body: JSON.stringify({ channel, segment, user_ids: userIds }),
   });
-export const sendBroadcast = (payload: { channel: BroadcastChannel; segment: BroadcastSegment; subject: string; body: string }) =>
+export const sendBroadcast = (payload: { channel: BroadcastChannel; segment: BroadcastSegment; subject: string; body: string; user_ids?: string[] }) =>
   request<{ id: string; delivery: string; recipients: number; contacts: BroadcastContact[] }>("/admin/broadcasts", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 export const fetchBroadcasts = () => request<BroadcastRow[]>("/admin/broadcasts");
-export const fetchBroadcastContacts = (segment: BroadcastSegment, channel: BroadcastChannel) =>
-  request<BroadcastContact[]>(`/admin/broadcasts/${segment}/${channel}/contacts`);
+export const fetchBroadcastCapabilities = () => request<{ email: boolean }>("/admin/broadcasts/capabilities");
+export const fetchBroadcastContacts = (id: string) => request<BroadcastContact[]>(`/admin/broadcasts/${id}/contacts`);
+export const fetchBroadcastReport = (id: string) => request<BroadcastReport>(`/admin/broadcasts/${id}/report`);
+export const searchMembers = (q: string) => request<MemberPick[]>(`/admin/broadcasts/people?q=${encodeURIComponent(q)}`);
 
 export interface ChatContactItem {
   id: string;
@@ -932,15 +1237,744 @@ export interface ChatContactItem {
   type: "direct";
   pairId: string;
   isOnline: boolean;
+  lastMessage?: string;
+  lastMessageTime?: string;
+  unreadCount?: number;
 }
 
-export const fetchChatContacts = () => request<ChatContactItem[]>("/chat/contacts");
+export const fetchChatContacts = (search?: string) =>
+  request<ChatContactItem[]>(search ? `/chat/contacts?search=${encodeURIComponent(search)}` : "/chat/contacts");
+
+export const searchChatMembers = (query: string = "") =>
+  request<ChatContactItem[]>(`/chat/search-members?q=${encodeURIComponent(query)}`);
+
+// Group chats: the creator is admin; invited members accept or decline from their notifications.
+export interface ChatGroupItem {
+  id: string;
+  name: string;
+  username: string;
+  role: string;
+  avatar: string | null;
+  type: "group";
+  roomId: string;
+  myRole: "admin" | "member";
+  membersCount: number;
+  isOnline: boolean;
+  lastMessage: string | null;
+  lastMessageTime: string | null;
+  invited?: number;
+}
+export interface GroupMember {
+  user_id: string;
+  name: string;
+  username: string;
+  role: "admin" | "member";
+  status: "member" | "invited";
+  is_me: boolean;
+  avatar?: string | null;
+}
+export interface GroupDetail {
+  id: string;
+  name: string;
+  topic: string;
+  slug: string;
+  avatar: string | null;
+  my_role: "admin" | "member";
+  my_status: "member" | "invited";
+  members: GroupMember[];
+}
+
+export const fetchChatGroups = () => request<ChatGroupItem[]>("/chat/groups");
+export const createChatGroup = (name: string, topic: string, memberIds: string[]) =>
+  request<ChatGroupItem>("/chat/groups", { method: "POST", body: JSON.stringify({ name, topic, member_ids: memberIds }) });
+export const fetchGroupDetail = (id: string) => request<GroupDetail>(`/chat/groups/${id}`);
+// Group admins: rename, description, picture, delete the whole group.
+export const editChatGroup = (id: string, changes: { name?: string; topic?: string }) =>
+  request<ChatGroupItem>(`/chat/groups/${id}`, { method: "PATCH", body: JSON.stringify(changes) });
+export const uploadGroupAvatar = (id: string, file: File) => postFile<ChatGroupItem>(`/chat/groups/${id}/avatar`, file);
+export const removeGroupAvatar = (id: string) => request<ChatGroupItem>(`/chat/groups/${id}/avatar`, { method: "DELETE" });
+export const deleteChatGroup = (id: string) => request<void>(`/chat/groups/${id}`, { method: "DELETE" });
+/** A message I pinned in a chat (pins are personal: the other people don't see them). */
+export interface ChatPinItem {
+  message_id: number;
+  author_name: string;
+  text: string;
+  has_file: boolean;
+  deleted: boolean;
+}
+export const fetchPins = (topic: string) => request<ChatPinItem[]>(`/chat/pins?topic=${encodeURIComponent(topic)}`);
+export const pinMessage = (topic: string, messageId: number) =>
+  request<void>("/chat/pins", { method: "POST", body: JSON.stringify({ topic, message_id: messageId }) });
+export const unpinMessage = (topic: string, messageId: number) =>
+  request<void>(`/chat/pins?topic=${encodeURIComponent(topic)}&message_id=${messageId}`, { method: "DELETE" });
+/** "Delete chat": clears this conversation for me only (1:1 or group); the others keep theirs. */
+export const clearChat = (topic: string) => request<void>("/chat/clear", { method: "POST", body: JSON.stringify({ topic }) });
+export const acceptGroupInvite = (id: string) =>
+  request<{ slug: string; topic: string; group: ChatGroupItem }>(`/chat/groups/${id}/accept`, { method: "POST" });
+export const declineGroupInvite = (id: string) => request<void>(`/chat/groups/${id}/decline`, { method: "POST" });
+export const addGroupMembers = (id: string, userIds: string[]) =>
+  request<{ invited: number }>(`/chat/groups/${id}/members`, { method: "POST", body: JSON.stringify({ user_ids: userIds }) });
+export const removeGroupMember = (id: string, userId: string) =>
+  request<void>(`/chat/groups/${id}/members/${userId}`, { method: "DELETE" });
+export const setGroupMemberRole = (id: string, userId: string, role: "admin" | "member") =>
+  request<void>(`/chat/groups/${id}/members/${userId}/role`, { method: "POST", body: JSON.stringify({ role }) });
+
+// Chat attachments: upload first (owned by the sender), then send a message naming it. Downloads
+// are allowed to the people of the chats it was sent in (backend app/api/chat_files.py).
+export interface ChatAttachment {
+  name: string;
+  filename: string;
+  content_type: string;
+  size: number | null;
+}
+
+/** Upload with progress (0..1). XHR rather than fetch: fetch can't report upload progress. */
+export function uploadChatAttachment(file: File, onProgress?: (fraction: number) => void): Promise<ChatAttachment> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}/chat/attachments`);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
+    xhr.onload = () => {
+      let body: { detail?: unknown } & Partial<ChatAttachment> = {};
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {}
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as ChatAttachment);
+      else reject(new ApiError(xhr.status, typeof body.detail === "string" ? body.detail : "Upload failed"));
+    };
+    xhr.onerror = () => reject(new ApiError(0, "Upload failed: check your connection"));
+    const form = new FormData();
+    form.append("file", file);
+    xhr.send(form);
+  });
+}
+
+export const chatAttachmentUrl = (name: string, download = false) =>
+  `${API_URL}/chat/attachments/${encodeURIComponent(name)}${download ? "?download=1" : ""}`;
+
+export interface SharedFile extends ChatAttachment {
+  message_id: string;
+  mine: boolean;
+  author_name: string;
+  sent_at: string;
+}
+
+/** The details panel of a 1:1 chat. `phone` is set only when they chose to show it in chat. */
+export interface ContactInfo {
+  id: string;
+  name: string;
+  username: string;
+  avatar: string | null;
+  headline: string | null;
+  bio: string | null;
+  phone: string | null;
+  joined_at: string | null;
+  topic: string;
+  files: SharedFile[];
+}
+export const fetchContactInfo = (userId: string) => request<ContactInfo>(`/chat/contacts/${userId}/info`);
 
 // Signed identity for the realtime chat socket (expires in 1h; src/lib/realtime.ts refreshes it).
 export const fetchChatToken = () => request<{ token: string }>("/chat/token");
 
-// Live support: a member's DM with the support admin, and the admin's inbox of such threads.
+// Live support: a member or guest's DM with the support admin, and the admin's inbox of such threads.
 export interface SupportAgent { id: string; name: string; topic: string }
-export interface SupportThread { topic: string; user_id: string; name: string; username: string; last: string; last_at: string; unread: number; from_member: boolean }
+export interface SupportThread {
+  topic: string;
+  user_id: string;
+  name: string;
+  username: string;
+  last: string;
+  last_at: string;
+  unread: number;
+  from_member: boolean;
+  is_guest?: boolean;
+}
 export const fetchSupportAgent = () => request<SupportAgent>("/support/agent");
 export const fetchSupportThreads = () => request<SupportThread[]>("/admin/support");
+
+export interface GuestSupportResponse {
+  guest_id: string;
+  session_id: string;
+  name: string;
+  /** What to call them: the name they gave (null if none). */
+  display_name: string | null;
+  handle: string;
+  returning: boolean;
+  visits: number;
+  last_visit: string | null;
+  username: string;
+  token: string;
+  agent: SupportAgent;
+}
+
+export const initGuestSupport = (sessionId: string, displayName?: string, email?: string) =>
+  request<GuestSupportResponse>("/support/guest/init", {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId, display_name: displayName || undefined, email: email || undefined }),
+  });
+
+// ---------- Curriculum Vitae (backend app/api/cv.py) ----------
+// profile/roles/skills are live from Proofolio; `data` is what only the CV has. Valid once signed.
+
+export interface CvLink { label: string; url: string }
+export interface CvReferee { id: string; name: string; title: string; organization: string; phone: string; email: string }
+export interface CvEntry { id: string; title: string; organization: string; place: string; start: string; end: string; points: string[] }
+export interface CvLevel { name: string; level: number }
+export interface CvData {
+  name: string;
+  title: string;
+  about: string;
+  address: string;
+  show_phone: boolean;
+  show_email: boolean;
+  links: CvLink[];
+  referees: CvReferee[];
+  education: CvEntry[];
+  jobs: CvEntry[];
+  role_points: Record<string, string[]>;
+  hidden_roles: string[];
+  skills: CvLevel[];
+  hidden_skills: string[];
+  languages: CvLevel[];
+  hobbies: string[];
+}
+export interface CvRole { id: string; title: string; organization: string; start: string | null; end: string | null }
+export interface Cv {
+  profile: { name: string; title: string; about: string; photo: string | null; email: string; phone: string; username: string };
+  roles: CvRole[];
+  skills: (CvLevel & { count: number })[];
+  data: CvData;
+  signature: string | null;
+  signed_at: string | null;
+  updated_at: string | null;
+  share_token?: string | null;
+}
+
+export const fetchMyCv = () => request<Cv>("/me/cv");
+export const saveMyCv = (data: CvData) => request<Cv>("/me/cv", { method: "PUT", body: JSON.stringify(data) });
+export const signMyCv = (dataUrl: string) =>
+  request<{ signed_at: string }>("/me/cv/signature", { method: "PUT", body: JSON.stringify({ data_url: dataUrl }) });
+export const removeCvSignature = () => request<void>("/me/cv/signature", { method: "DELETE" });
+export const shareMyCv = () => request<{ share_token: string }>("/me/cv/share", { method: "POST" });
+export const stopSharingCv = () => request<void>("/me/cv/share", { method: "DELETE" });
+export const fetchSharedCv = (token: string) => request<Cv>(`/cv/shared/${encodeURIComponent(token)}`);
+
+/** Admin: remove one code from the list. */
+export const deleteAdminOtp = (id: string) => request<void>(`/admin/otps/${id}`, { method: "DELETE" });
+/** Admin: empty the list ("finished" = used and expired codes only). */
+export const clearAdminOtps = (scope: "finished" | "all") => request<{ removed: number }>(`/admin/otps/clear?scope=${scope}`, { method: "POST" });
+
+// ---- engagement: stars, comments, CV requests, visitor messages ----
+
+export type EngageKind = "profile" | "work";
+export interface EngagePerson {
+  name: string;
+  username: string | null;
+  avatar: string | null;
+}
+export interface EngageComment {
+  id: string;
+  body: string;
+  created_at: string;
+  author: EngagePerson;
+  mine: boolean;
+  can_delete: boolean;
+}
+export interface EngageStatus {
+  likes: number;
+  /** Who starred it (the latest 24). */
+  stars: EngagePerson[];
+  liked: boolean;
+  signed_in: boolean;
+  self: boolean;
+  comment_count: number;
+  comments: EngageComment[];
+}
+export const engageStatus = (kind: EngageKind, key: string) => request<EngageStatus>(`/engage/${kind}/${encodeURIComponent(key)}`);
+export const setLike = (kind: EngageKind, key: string, on: boolean) =>
+  request<void>(`/engage/${kind}/${encodeURIComponent(key)}/like`, { method: on ? "PUT" : "DELETE" });
+export const addComment = (kind: EngageKind, key: string, body: string) =>
+  request<EngageComment>(`/engage/${kind}/${encodeURIComponent(key)}/comments`, { method: "POST", body: JSON.stringify({ body }) });
+export const deleteComment = (id: string) => request<void>(`/engage/comments/${id}`, { method: "DELETE" });
+
+export interface AskPayload {
+  name?: string;
+  email?: string;
+  message?: string;
+  website?: string;
+}
+export const askForCv = (username: string, payload: AskPayload) =>
+  request<{ ok: boolean }>(`/u/${encodeURIComponent(username)}/cv-request`, { method: "POST", body: JSON.stringify(payload) });
+export const leaveVisitorMessage = (username: string, payload: AskPayload) =>
+  request<{ ok: boolean }>(`/u/${encodeURIComponent(username)}/message`, { method: "POST", body: JSON.stringify(payload) });
+
+export interface CvRequestItem {
+  id: string;
+  name: string;
+  email: string | null;
+  message: string | null;
+  status: "pending" | "sent" | "declined";
+  created_at: string;
+  member_username: string | null;
+  cv_ready: boolean;
+}
+export const fetchCvRequests = () => request<CvRequestItem[]>("/me/cv-requests");
+export const sendCvRequest = (id: string) => request<{ status: string; link: string; emailed: boolean | null }>(`/me/cv-requests/${id}/send`, { method: "POST" });
+export const declineCvRequest = (id: string) => request<{ status: string }>(`/me/cv-requests/${id}/decline`, { method: "POST" });
+export const deleteCvRequest = (id: string) => request<void>(`/me/cv-requests/${id}`, { method: "DELETE" });
+
+export interface VisitorMessageItem {
+  id: string;
+  name: string;
+  email: string | null;
+  body: string;
+  created_at: string;
+  read: boolean;
+}
+export const fetchVisitorMessages = () => request<VisitorMessageItem[]>("/me/visitor-messages");
+export const readVisitorMessage = (id: string) => request<void>(`/me/visitor-messages/${id}/read`, { method: "POST" });
+export const deleteVisitorMessage = (id: string) => request<void>(`/me/visitor-messages/${id}`, { method: "DELETE" });
+
+export interface EngagedPerson extends EngagePerson {
+  at: string;
+}
+export interface EngagedComment extends EngagePerson {
+  id: string;
+  body: string;
+  at: string;
+}
+export interface Engagement {
+  totals: {
+    followers: number;
+    profile_likes: number;
+    profile_comments: number;
+    work_likes: number;
+    work_comments: number;
+    watchers: number;
+    cv_pending: number;
+    messages_unread: number;
+  };
+  profile: { likes: EngagedPerson[]; comments: EngagedComment[] };
+  followers: EngagedPerson[];
+  works: {
+    id: string;
+    title: string;
+    work_type: string;
+    visibility: string;
+    likes: EngagedPerson[];
+    like_count: number;
+    comments: EngagedComment[];
+    comment_count: number;
+    watchers: EngagedPerson[];
+    watcher_count: number;
+  }[];
+}
+export const fetchEngagement = () => request<Engagement>("/me/engagement");
+
+// ---------- AI: admin dashboards and the website's support assistant ----------
+
+/** One chart of an AI-built dashboard. The numbers always come from the database, never from the model. */
+export type AiWidget =
+  | { type: "kpis"; title: string; items: { label: string; value: number; prev?: number; hint?: string }[] }
+  | { type: "columns"; title: string; total: number; points: Point[]; mode: "sum" | "avg" }
+  | { type: "bars"; title: string; bars: Bar[]; empty?: string; view?: "bars" | "pie" | "donut" }
+  | { type: "funnel"; title: string; steps: { step: string; value: number }[] };
+
+export interface AiDashboard {
+  /** The model's short summary of what the charts show. */
+  reply: string;
+  widgets: AiWidget[];
+  /** A PDF the assistant made: show a download button. url is an API path, see apiUrl(). */
+  download?: { name: string; label: string; url: string } | null;
+  seconds: number;
+}
+
+/** Full URL of an API path, for links the browser opens itself (downloads). */
+export const apiUrl = (path: string) => `${API_URL}${path}`;
+
+/** chat = plain conversation (default), build = dashboard of charts, prepare = written piece, video = storyboard, image = prompt design. */
+export type AdminAiMode = "chat" | "build" | "prepare" | "video" | "image";
+
+/** Admin: ask in plain words, get a reply and charts. history: earlier "User: ..." / "Assistant: ..." lines, oldest first. */
+export const adminAiDashboard = (prompt: string, history: string[] = [], mode: AdminAiMode = "chat") =>
+  request<AiDashboard>("/ai/admin/dashboard", json("POST", { prompt, history, mode }));
+
+export interface AiMonitoringUser {
+  id: string;
+  fullname: string;
+  username: string;
+  email: string;
+  is_admin: boolean;
+  is_ai_enabled: boolean;
+  daily_token_limit: number;
+  monthly_token_limit: number;
+  tier: string;
+  notes: string | null;
+  tokens_today: number;
+  tokens_total: number;
+  requests_today: number;
+  requests_total: number;
+  last_used_at: string | null;
+  usage_percent_today: number;
+}
+
+export interface AiMonitoringLog {
+  id: string;
+  user_id: string | null;
+  user_name: string;
+  feature: string;
+  endpoint: string;
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  latency_ms: number | null;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface AiMonitoringData {
+  provider: string;
+  model: string;
+  model_specs: {
+    display_name: string;
+    rpm_limit: number;
+    tpm_limit: number;
+    rpd_limit: number;
+    context_window: number;
+    max_output_tokens: number;
+    tier: string;
+  };
+  has_api_key: boolean;
+  rate_limits: {
+    rpm_limit: number;
+    tpm_limit: number;
+    rpd_limit: number;
+    context_window: number;
+    max_output_tokens: number;
+    current_rpm: number;
+    current_tpm: number;
+    requests_today: number;
+    requests_remaining_today: number;
+    rate_limited_today: number;
+  };
+  usage_today: {
+    requests_count: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    avg_latency_ms: number;
+    rate_limit_hits: number;
+  };
+  usage_all_time: {
+    total_requests: number;
+    total_tokens: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+  };
+  breakdown_by_feature: Array<{
+    feature: string;
+    requests_count: number;
+    total_tokens: number;
+  }>;
+  time_series: Array<{
+    date: string;
+    requests_count: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  }>;
+  users: AiMonitoringUser[];
+  recent_logs: AiMonitoringLog[];
+}
+
+export interface GeminiProbeResult {
+  ok: boolean;
+  status: string;
+  model?: string;
+  display_name?: string;
+  input_token_limit?: number;
+  output_token_limit?: number;
+  latency_ms: number;
+  message?: string;
+  status_code?: number;
+}
+
+export const fetchAiMonitoring = (days: number = 30) =>
+  request<AiMonitoringData>(`/admin/ai/monitoring?days=${days}`);
+
+export const probeGeminiApi = (model?: string) =>
+  request<GeminiProbeResult>(model ? `/admin/ai/probe?model=${encodeURIComponent(model)}` : "/admin/ai/probe");
+
+export const updateUserAiQuota = (
+  userId: string,
+  data: {
+    is_ai_enabled: boolean;
+    daily_token_limit: number;
+    monthly_token_limit: number;
+    tier?: string;
+    notes?: string | null;
+  }
+) =>
+  request<{ ok: boolean; message: string; quota: any }>(
+    `/admin/ai/users/${userId}/quota`,
+    json("PUT", data)
+  );
+
+export interface AiProviderConfig {
+  provider: "gemini" | "deepseek" | "mistral" | "ollama" | "custom";
+  gemini?: {
+    api_key?: string;
+    model?: string;
+  };
+  deepseek?: {
+    api_key?: string;
+    model?: string;
+    base_url?: string;
+  };
+  mistral?: {
+    api_key?: string;
+    model?: string;
+    base_url?: string;
+  };
+  ollama?: {
+    base_url?: string;
+    model?: string;
+  };
+  custom?: {
+    base_url?: string;
+    api_key?: string;
+    model?: string;
+  };
+  temperature?: number;
+  max_tokens?: number;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export interface AiTestResult {
+  ok: boolean;
+  latency_ms: number;
+  duration_seconds?: number;
+  tokens_per_second?: number;
+  tokens_generated?: number;
+  reply?: string;
+  error?: string;
+  provider: string;
+  model?: string;
+  message: string;
+  system?: {
+    cpu_percent: number;
+    ram_used_gb: number;
+    ram_total_gb: number;
+    ram_percent: number;
+  };
+}
+
+export interface LocalAiModel {
+  name: string;
+  size_bytes: number;
+  size_formatted: string;
+  parameter_size: string;
+  quantization: string;
+  family: string;
+  format: string;
+  capabilities: string[];
+  is_running: boolean;
+  ram_used_gb: number;
+  vram_used_gb: number;
+  expires_at?: string;
+  modified_at?: string;
+}
+
+export interface LocalModelsResponse {
+  ok: boolean;
+  endpoint: string;
+  models: LocalAiModel[];
+  total_count: number;
+  running_count: number;
+  system: {
+    cpu_percent: number;
+    ram_used_gb: number;
+    ram_total_gb: number;
+    ram_percent: number;
+  };
+  error?: string;
+  message?: string;
+}
+
+export interface LocalModelBenchmarkResult {
+  ok: boolean;
+  model: string;
+  endpoint: string;
+  prompt: string;
+  reply?: string;
+  duration_seconds: number;
+  eval_duration_seconds?: number;
+  load_duration_seconds?: number;
+  tokens_generated?: number;
+  tokens_per_second?: number;
+  is_warm?: boolean;
+  model_memory_gb?: number;
+  system: {
+    cpu_percent: number;
+    ram_used_gb: number;
+    ram_total_gb: number;
+    ram_percent: number;
+  };
+  error?: string;
+  message?: string;
+}
+
+export const fetchAiConfig = () =>
+  request<AiProviderConfig>("/admin/ai/config");
+
+export const updateAiConfig = (config: AiProviderConfig) =>
+  request<{ ok: boolean; message: string; config: AiProviderConfig }>(
+    "/admin/ai/config",
+    json("PUT", { config })
+  );
+
+export const testAiConfig = (config: AiProviderConfig) =>
+  request<AiTestResult>(
+    "/admin/ai/config/test",
+    json("POST", { config })
+  );
+
+export const fetchLocalModels = (endpoint?: string) =>
+  request<LocalModelsResponse>(
+    `/admin/ai/local-models${endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : ""}`
+  );
+
+export const benchmarkLocalModel = (data: { model: string; prompt?: string; endpoint?: string }) =>
+  request<LocalModelBenchmarkResult>(
+    "/admin/ai/local-models/benchmark",
+    json("POST", data)
+  );
+
+export const selectLocalModel = (data: { model: string; endpoint?: string }) =>
+  request<{ ok: boolean; message: string; config: AiProviderConfig; model: string; endpoint: string }>(
+    "/admin/ai/local-models/select",
+    json("POST", data)
+  );
+
+
+/** Public website: one turn with the AI support assistant. No account needed; it sees no user data. */
+export const askSupportAi = (message: string, history: string[] = [], name?: string | null) =>
+  request<{ reply: string }>("/ai/support", {
+    method: "POST",
+    body: JSON.stringify({ message, history, name: name || null }),
+  });
+
+// ---------- Memories & Personal Timeline ----------
+
+export interface MemoryItem {
+  id: string;
+  title: string | null;
+  content: string;
+  mood: string;
+  people: string[];
+  category: string;
+  location?: string | null;
+  skills?: string[];
+  tags?: string[];
+  importance?: number;
+  occurred_on: string;
+  occurred_time?: string | null;
+  visibility: "public" | "unlisted" | "private" | "draft";
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface CreateMemoryPayload {
+  title?: string | null;
+  content: string;
+  mood: string;
+  people: string[];
+  category?: string;
+  location?: string | null;
+  tags?: string[];
+  importance?: number;
+  occurred_on?: string | null;
+  visibility?: "public" | "unlisted" | "private" | "draft";
+}
+
+export const fetchMemories = (params?: { q?: string; category?: string; mood?: string; limit?: number }) => {
+  const query = new URLSearchParams();
+  if (params?.q) query.set("q", params.q);
+  if (params?.category) query.set("category", params.category);
+  if (params?.mood) query.set("mood", params.mood);
+  if (params?.limit) query.set("limit", String(params.limit));
+  const qs = query.toString();
+  return request<MemoryItem[]>(`/memories${qs ? `?${qs}` : ""}`);
+};
+
+export const fetchMemory = (id: string) => request<MemoryItem>(`/memories/${id}`);
+
+export const createMemory = (payload: CreateMemoryPayload) =>
+  request<MemoryItem>("/memories", { method: "POST", body: JSON.stringify(payload) });
+
+export const updateMemory = (id: string, payload: Partial<CreateMemoryPayload>) =>
+  request<MemoryItem>(`/memories/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+
+export const deleteMemory = (id: string) =>
+  request<void>(`/memories/${id}`, { method: "DELETE" });
+
+// ---------- Stories & Narrated Journeys ----------
+
+export interface StoryChapterItem {
+  id: string;
+  position: number;
+  title: string;
+  content: string;
+  memory_ids: string[];
+  ai_generated?: boolean;
+}
+
+export interface StoryItem {
+  id: string;
+  title: string;
+  description?: string | null;
+  cover_media?: string | null;
+  status: "draft" | "published";
+  visibility: "public" | "unlisted" | "private" | "draft";
+  created_at: string;
+  updated_at?: string;
+  chapters?: StoryChapterItem[];
+}
+
+export interface CreateStoryPayload {
+  title: string;
+  description?: string | null;
+  visibility?: "public" | "unlisted" | "private" | "draft";
+  status?: "draft" | "published";
+}
+
+export const fetchStories = () => request<StoryItem[]>("/stories");
+
+export const fetchStory = (id: string) => request<StoryItem>(`/stories/${id}`);
+
+export const createStory = (payload: CreateStoryPayload) =>
+  request<StoryItem>("/stories", { method: "POST", body: JSON.stringify(payload) });
+
+export const updateStory = (id: string, payload: Partial<CreateStoryPayload>) =>
+  request<StoryItem>(`/stories/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+
+export const deleteStory = (id: string) =>
+  request<void>(`/stories/${id}`, { method: "DELETE" });
+
+export const generateStoryWithAi = (topic: string) =>
+  request<StoryItem>("/stories/generate", { method: "POST", body: JSON.stringify({ topic }) });
+
+export const addStoryChapter = (storyId: string, payload: { title: string; content?: string }) =>
+  request<StoryChapterItem>(`/stories/${storyId}/chapters`, { method: "POST", body: JSON.stringify(payload) });
+
+export const updateStoryChapter = (storyId: string, chapterId: string, payload: { title?: string; content?: string }) =>
+  request<StoryChapterItem>(`/stories/${storyId}/chapters/${chapterId}`, { method: "PATCH", body: JSON.stringify(payload) });
+
+export const deleteStoryChapter = (storyId: string, chapterId: string) =>
+  request<void>(`/stories/${storyId}/chapters/${chapterId}`, { method: "DELETE" });
+

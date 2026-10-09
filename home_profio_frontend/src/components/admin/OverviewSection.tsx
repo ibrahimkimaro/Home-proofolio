@@ -185,5 +185,7 @@ export function OtpStatusBadge({ otp }: { otp: AdminOtpLog }) {
   if (otp.is_verified) return <Badge tone="good">Verified</Badge>;
   if (new Date(otp.expires_at) < new Date()) return <Badge tone="neutral">Expired</Badge>;
   if (otp.delivery_status === "awaiting_admin") return <Badge tone="warn">To send</Badge>;
+  if (otp.sent_via === "email") return <Badge tone="info">Emailed</Badge>;
+  if (otp.sent_via === "admin") return <Badge tone="info">Sent by hand</Badge>;
   return <Badge tone="info">Sent</Badge>;
 }

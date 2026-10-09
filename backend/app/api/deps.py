@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Cookie, Depends, HTTPException, Request, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,6 +19,20 @@ SESSION_COOKIE_NAME = "session_token"
 CODE_TTL = timedelta(minutes=15)
 UNSENT_TTL = timedelta(hours=24)
 UNVERIFIED_TTL = timedelta(days=7)
+
+
+# A suspended account (not activated within 15 minutes of its code) can only reach these: sign-in state, the
+# activation dialog, support chat and what the support chat needs (token, attachments, notifications, push).
+SUSPENDED_OK = ("/auth", "/support", "/me/codes", "/me/push", "/me/notifications", "/push", "/platform", "/chat/token", "/chat/attachments", "/chat/clear")
+
+
+async def start_activation_clock(db: AsyncSession, user_id) -> None:
+    """The first activation code just reached the member: their 15 minutes start (once; later codes don't extend it)."""
+    await db.execute(
+        update(User)
+        .where(User.id == user_id, User.otp_pending, User.activation_deadline.is_(None))
+        .values(activation_deadline=datetime.now(timezone.utc) + CODE_TTL)
+    )
 
 
 def otp_expired(user: User) -> bool:
@@ -68,6 +82,9 @@ async def get_current_user(
         await db.execute(delete(User).where(User.id == user.id))
         await db.commit()
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This account was never activated and has been deleted.")
+
+    if user.suspended and not request.url.path.startswith(SUSPENDED_OK):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "account_suspended")
 
     # Devices list (Settings, Admin): when and from where each session was last used.
     now = datetime.now(timezone.utc)

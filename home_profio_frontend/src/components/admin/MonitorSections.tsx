@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
   Ban,
+  Check,
+  CheckCheck,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Copy,
   Database,
@@ -23,7 +26,9 @@ import {
   ShieldCheck,
   Smartphone,
   Timer,
+  UserCheck,
   Users,
+  X,
   XCircle,
 } from "lucide-react";
 import {
@@ -31,20 +36,26 @@ import {
   endAdminSession,
   endUserSessions,
   fetchAdminDevices,
+  fetchBroadcastCapabilities,
   fetchBroadcastContacts,
+  fetchBroadcastReport,
   fetchBroadcasts,
   fetchIpBlocks,
   fetchSecurityEvents,
   fetchSecurityOverview,
   fetchSystemHealth,
   previewBroadcast,
+  searchMembers,
   sendBroadcast,
   unblockIp,
   type AdminDevice,
   type BroadcastChannel,
   type BroadcastContact,
+  type BroadcastPerson,
+  type BroadcastReport,
   type BroadcastRow,
   type BroadcastSegment,
+  type MemberPick,
   type IpBlock,
   type SecurityEventRow,
   type SecurityOverview,
@@ -740,16 +751,23 @@ export function HealthSection({ onError }: { onError: OnError }) {
 // ======================= Messages =======================
 
 const CHANNELS: { id: BroadcastChannel; label: string; icon: typeof Megaphone; hint: string }[] = [
-  { id: "in_app", label: "In-app", icon: Megaphone, hint: "Appears in their notification bell right away." },
+  { id: "in_app", label: "In-app", icon: Megaphone, hint: "Appears in their notification bell right away. You'll see who received it and who read it." },
   { id: "sms", label: "SMS", icon: MessageSquare, hint: "Only members with a phone number. You send it from the list below." },
-  { id: "email", label: "Email", icon: Mail, hint: "Every member's email address. You send it from the list below." },
+  { id: "email", label: "Email", icon: Mail, hint: "Every chosen member's email address. You send it from the list below." },
 ];
 const SEGMENTS: { value: BroadcastSegment; label: string }[] = [
-  { value: "all", label: "Everyone" },
+  { value: "all", label: "All members" },
   { value: "active", label: "Activated accounts" },
   { value: "unactivated", label: "Not yet activated" },
+  { value: "selected", label: "Choose people…" },
 ];
-const SEGMENT_LABEL = Object.fromEntries(SEGMENTS.map((s) => [s.value, s.label]));
+const SEGMENT_LABEL = Object.fromEntries(SEGMENTS.map((s) => [s.value, s.value === "selected" ? "Chosen people" : s.label]));
+
+const DELIVERY_STATUS: Record<BroadcastPerson["status"], { label: string; tone: Tone }> = {
+  sent: { label: "Sent", tone: "neutral" },
+  delivered: { label: "Delivered", tone: "info" },
+  read: { label: "Read", tone: "good" },
+};
 
 function downloadCsv(contacts: BroadcastContact[], channel: BroadcastChannel) {
   const q = (v: string | null) => `"${(v ?? "").replace(/"/g, '""')}"`;
@@ -760,15 +778,165 @@ function downloadCsv(contacts: BroadcastContact[], channel: BroadcastChannel) {
   URL.revokeObjectURL(url);
 }
 
+/** Pick exactly which members get a message: search, add, remove. Guests never appear here. */
+function PeoplePicker({ picked, onChange }: { picked: MemberPick[]; onChange: (p: MemberPick[]) => void }) {
+  const [q, setQ] = useState("");
+  const [found, setFound] = useState<MemberPick[]>([]);
+  const [loading, setLoading] = useState(true);
+  const pickedIds = useMemo(() => new Set(picked.map((p) => p.id)), [picked]);
+
+  useEffect(() => {
+    let live = true;
+    const t = setTimeout(() => {
+      setLoading(true);
+      searchMembers(q)
+        .then((r) => live && setFound(r))
+        .catch(() => live && setFound([]))
+        .finally(() => live && setLoading(false));
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [q]);
+
+  const toggle = (m: MemberPick) => onChange(pickedIds.has(m.id) ? picked.filter((p) => p.id !== m.id) : [...picked, m]);
+
+  return (
+    <div className="rounded-2xl border border-hairline p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[13px] font-semibold text-ink-800">
+          Who should get it? <span className="font-normal text-slate">({picked.length} chosen)</span>
+        </p>
+        {picked.length > 0 && (
+          <button type="button" onClick={() => onChange([])} className="cursor-pointer text-[12px] text-brass-dark hover:underline">
+            Clear all
+          </button>
+        )}
+      </div>
+
+      {picked.length > 0 && (
+        <ul className="mt-2 flex flex-wrap gap-1.5">
+          {picked.map((p) => (
+            <li key={p.id} className="inline-flex items-center gap-1 rounded-full bg-ink px-2.5 py-1 text-[12px] font-medium text-paper">
+              {p.name}
+              <button type="button" onClick={() => toggle(p)} aria-label={`Remove ${p.name}`} className="cursor-pointer rounded-full p-0.5 hover:bg-white/20">
+                <X className="h-3 w-3" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-3">
+        <SearchInput value={q} onChange={setQ} placeholder="Search members by name, username or email" />
+      </div>
+      <ul className="mt-2 max-h-56 divide-y divide-hairline/50 overflow-y-auto rounded-xl border border-hairline/60">
+        {loading && found.length === 0 && <li className="px-3 py-4 text-center text-[13px] text-slate">Searching…</li>}
+        {!loading && found.length === 0 && <li className="px-3 py-4 text-center text-[13px] text-slate">No members match.</li>}
+        {found.map((m) => {
+          const on = pickedIds.has(m.id);
+          return (
+            <li key={m.id}>
+              <button
+                type="button"
+                onClick={() => toggle(m)}
+                aria-pressed={on}
+                className={`flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-paper-dim ${on ? "bg-brass/5" : ""}`}
+              >
+                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border ${on ? "border-ink bg-ink text-paper" : "border-hairline"}`}>
+                  {on && <Check className="h-3.5 w-3.5" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-ink-800">{m.name}</span>
+                  <span className="block truncate text-[12px] text-slate">
+                    @{m.username} · {m.email}
+                  </span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/** Who a sent in-app message reached: delivered and read, person by person. */
+function DeliveryReport({ id, onError }: { id: string; onError: OnError }) {
+  const [report, setReport] = useState<BroadcastReport | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    try {
+      setReport(await fetchBroadcastReport(id));
+    } catch (e) {
+      onError(msg(e, "Couldn't load who received it"));
+    } finally {
+      setBusy(false);
+    }
+  }, [id, onError]);
+  useEffect(() => {
+    let live = true;
+    fetchBroadcastReport(id)
+      .then((r) => live && setReport(r))
+      .catch((e) => live && onError(msg(e, "Couldn't load who received it")));
+    return () => {
+      live = false;
+    };
+  }, [id, onError]);
+
+  if (!report) return <p className="py-3 text-[13px] text-slate">Loading…</p>;
+  if (!report.tracked)
+    return <p className="py-3 text-[13px] text-slate">SMS and email are sent by hand, so there&apos;s nothing to track. Use &ldquo;Export list again&rdquo; to resend.</p>;
+
+  const total = report.total ?? 0;
+  return (
+    <div className="py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone="neutral">{total} sent</Badge>
+        <Badge tone="info">
+          <CheckCheck className="h-3 w-3" /> {report.delivered} delivered
+        </Badge>
+        <Badge tone="good">
+          <CheckCircle2 className="h-3 w-3" /> {report.read} read
+        </Badge>
+        <button type="button" onClick={load} disabled={busy} className="ml-auto cursor-pointer text-[12px] text-brass-dark hover:underline disabled:opacity-50">
+          {busy ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+      <ul className="mt-3 max-h-64 divide-y divide-hairline/50 overflow-y-auto rounded-xl border border-hairline/60">
+        {report.recipients.map((p) => (
+          <li key={p.id} className="flex items-center gap-3 px-3 py-2">
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] font-semibold text-ink-800">{p.name}</span>
+              <span className="block truncate text-[12px] text-slate">@{p.username}</span>
+            </span>
+            <span className="hidden text-right text-[12px] text-slate sm:block">
+              {p.read_at ? `Read ${timeAgo(p.read_at)}` : p.delivered_at ? `Delivered ${timeAgo(p.delivered_at)}` : "Not opened their app yet"}
+            </span>
+            <Badge tone={DELIVERY_STATUS[p.status].tone}>{DELIVERY_STATUS[p.status].label}</Badge>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function MessagesSection({ onError }: { onError: OnError }) {
   const [channel, setChannel] = useState<BroadcastChannel>("in_app");
   const [segment, setSegment] = useState<BroadcastSegment>("all");
+  const [picked, setPicked] = useState<MemberPick[]>([]);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [count, setCount] = useState<number | null>(null);
   const [history, setHistory] = useState<BroadcastRow[]>([]);
   const [result, setResult] = useState<{ channel: BroadcastChannel; recipients: number; contacts: BroadcastContact[] } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [openReport, setOpenReport] = useState<string | null>(null);
+  const [emailLive, setEmailLive] = useState(false);
+  const [sentState, setSentState] = useState<string>("");
 
   const loadHistory = useCallback(async () => {
     try {
@@ -777,28 +945,48 @@ export function MessagesSection({ onError }: { onError: OnError }) {
       onError(msg(e, "Couldn't load message history"));
     }
   }, [onError]);
-  usePoll(loadHistory, 60000);
-
+  usePoll(loadHistory, 30000);
   useEffect(() => {
+    fetchBroadcastCapabilities()
+      .then((c) => setEmailLive(c.email))
+      .catch(() => {});
+  }, []);
+  // While emails are going out, check back every few seconds so the result shows up on its own.
+  const anySending = history.some((b) => b.delivery === "sending");
+  useEffect(() => {
+    if (!anySending) return;
+    const id = setInterval(loadHistory, 4000);
+    return () => clearInterval(id);
+  }, [anySending, loadHistory]);
+
+  const pickedKey = picked.map((p) => p.id).join(",");
+  useEffect(() => {
+    if (segment === "selected" && picked.length === 0) return;
     let live = true;
-    previewBroadcast(channel, segment)
+    previewBroadcast(channel, segment, segment === "selected" ? picked.map((p) => p.id) : [])
       .then((r) => live && setCount(r.count))
       .catch(() => live && setCount(null));
     return () => {
       live = false;
     };
-  }, [channel, segment]);
+    // pickedKey stands for the picked list (its ids), so the effect doesn't re-run on every new array.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel, segment, pickedKey]);
 
+  const nobodyChosen = segment === "selected" && picked.length === 0;
+  const shownCount = nobodyChosen ? 0 : count;
   const needsTitle = channel !== "sms";
-  const ready = body.trim() && (!needsTitle || subject.trim()) && !!count;
+  const ready = body.trim() && (!needsTitle || subject.trim()) && !!shownCount;
   const smsParts = Math.ceil(body.length / 160) || 1;
 
   async function send() {
     try {
-      const r = await sendBroadcast({ channel, segment, subject, body });
+      const r = await sendBroadcast({ channel, segment, subject, body, user_ids: segment === "selected" ? picked.map((p) => p.id) : undefined });
       setResult({ channel, recipients: r.recipients, contacts: r.contacts });
+      setSentState(r.delivery);
       setSubject("");
       setBody("");
+      if (segment === "selected") setPicked([]);
       await loadHistory();
     } catch (e) {
       onError(msg(e, "Couldn't send the message"));
@@ -807,7 +995,7 @@ export function MessagesSection({ onError }: { onError: OnError }) {
 
   async function exportAgain(b: BroadcastRow) {
     try {
-      downloadCsv(await fetchBroadcastContacts(b.segment, b.channel), b.channel);
+      downloadCsv(await fetchBroadcastContacts(b.id), b.channel);
     } catch (e) {
       onError(msg(e, "Couldn't export the list"));
     }
@@ -815,7 +1003,7 @@ export function MessagesSection({ onError }: { onError: OnError }) {
 
   return (
     <div className="space-y-6">
-      <Panel icon={Send} title="New message" subtitle="Write once, reach a whole group of members">
+      <Panel icon={Send} title="New message" subtitle="Write once, send to everyone or only the people you choose">
         <div className="grid gap-5 lg:grid-cols-[1fr_18rem]">
           <div className="space-y-4">
             <div role="radiogroup" aria-label="Send by" className="grid grid-cols-3 gap-2">
@@ -834,7 +1022,11 @@ export function MessagesSection({ onError }: { onError: OnError }) {
                 </button>
               ))}
             </div>
-            <p className="text-[12px] text-slate">{CHANNELS.find((c) => c.id === channel)!.hint}</p>
+            <p className="text-[12px] text-slate">
+              {channel === "email" && emailLive ? "Sent from homeproofolio@gmail.com straight to each chosen member's email address." : CHANNELS.find((c) => c.id === channel)!.hint}
+            </p>
+
+            {segment === "selected" && <PeoplePicker picked={picked} onChange={setPicked} />}
 
             {needsTitle && (
               <label className="block text-[13px] font-medium text-ink-700">
@@ -869,13 +1061,17 @@ export function MessagesSection({ onError }: { onError: OnError }) {
                 ))}
               </select>
             </label>
+            <p className="-mt-2 flex items-start gap-1.5 text-[12px] text-slate">
+              <UserCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              Only signed-up members. Guest visitors are never included.
+            </p>
             <div>
               <p className="text-[12px] text-slate">Recipients</p>
-              <p className="text-[28px] font-bold tabular-nums text-ink-800">{count ?? "–"}</p>
+              <p className="text-[28px] font-bold tabular-nums text-ink-800">{shownCount ?? "–"}</p>
             </div>
             <div className="mt-auto">
-              <ConfirmButton disabled={!ready} confirmLabel={`Send to ${count ?? 0}?`} onConfirm={send}>
-                <Send className="h-3.5 w-3.5" /> {channel === "in_app" ? "Send now" : "Prepare list"}
+              <ConfirmButton disabled={!ready} confirmLabel={`Send to ${shownCount ?? 0}?`} onConfirm={send}>
+                <Send className="h-3.5 w-3.5" /> {channel === "in_app" || (channel === "email" && emailLive) ? "Send now" : "Prepare list"}
               </ConfirmButton>
             </div>
           </aside>
@@ -883,9 +1079,14 @@ export function MessagesSection({ onError }: { onError: OnError }) {
 
         {result && (
           <div className="mt-5 rounded-2xl border border-brass/40 bg-brass/5 p-4">
-            {result.channel === "in_app" ? (
+            {result.channel === "email" && sentState === "sending" ? (
               <p className="flex items-center gap-2 text-[14px] text-ink-800">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" /> Sent to {result.recipients} {result.recipients === 1 ? "member's" : "members'"} notification bell.
+                <CheckCircle2 className="h-4 w-4 text-emerald-500" /> Sending {result.recipients} {result.recipients === 1 ? "email" : "emails"} now. The result shows under &ldquo;Sent messages&rdquo; in a moment.
+              </p>
+            ) : result.channel === "in_app" ? (
+              <p className="flex items-center gap-2 text-[14px] text-ink-800">
+                <CheckCircle2 className="h-4 w-4 text-emerald-500" /> Sent to {result.recipients} {result.recipients === 1 ? "member's" : "members'"} notification bell. Open it
+                under &ldquo;Sent messages&rdquo; to see who received and read it.
               </p>
             ) : (
               <>
@@ -923,15 +1124,15 @@ export function MessagesSection({ onError }: { onError: OnError }) {
         )}
       </Panel>
 
-      <Panel icon={Megaphone} title="Sent messages" subtitle="Newest first">
+      <Panel icon={Megaphone} title="Sent messages" subtitle="Newest first. Open a message to see who received and read it.">
         <div className="-mx-5 overflow-x-auto px-5">
-          <table className="w-full min-w-[640px] text-[13px]">
+          <table className="w-full min-w-[720px] text-[13px]">
             <thead>
               <tr className="border-b border-hairline/70">
                 <th className={th}>When</th>
                 <th className={th}>Message</th>
                 <th className={th}>Group</th>
-                <th className={th}>Delivery</th>
+                <th className={th}>Reached</th>
                 <th className={`${th} text-right`}>People</th>
               </tr>
             </thead>
@@ -939,30 +1140,66 @@ export function MessagesSection({ onError }: { onError: OnError }) {
               {history.length === 0 ? (
                 <EmptyRow colSpan={5}>No messages sent yet.</EmptyRow>
               ) : (
-                history.map((b) => (
-                  <tr key={b.id} className="align-top">
-                    <td className={`${td} whitespace-nowrap text-slate`}>{timeAgo(b.created_at)}</td>
-                    <td className={td}>
-                      <p className="font-semibold text-ink-800">{b.subject || (b.channel === "sms" ? "SMS" : "Message")}</p>
-                      <p className="line-clamp-2 max-w-md text-slate">{b.body}</p>
-                      {b.sent_by && <p className="text-[12px] text-slate/80">by {b.sent_by}</p>}
-                    </td>
-                    <td className={`${td} text-slate`}>{SEGMENT_LABEL[b.segment]}</td>
-                    <td className={td}>
-                      {b.delivery === "manual" ? (
-                        <span className="flex flex-col items-start gap-1">
-                          <Badge tone="warn">{b.channel === "sms" ? "SMS" : "Email"}, sent by hand</Badge>
-                          <button type="button" onClick={() => exportAgain(b)} className="cursor-pointer text-[12px] text-brass-dark hover:underline">
-                            Export list again
-                          </button>
-                        </span>
-                      ) : (
-                        <Badge tone="good">In-app, delivered</Badge>
+                history.map((b) => {
+                  const open = openReport === b.id;
+                  return (
+                    <Fragment key={b.id}>
+                      <tr className="align-top">
+                        <td className={`${td} whitespace-nowrap text-slate`}>{timeAgo(b.created_at)}</td>
+                        <td className={td}>
+                          <p className="font-semibold text-ink-800">{b.subject || (b.channel === "sms" ? "SMS" : "Message")}</p>
+                          <p className="line-clamp-2 max-w-md text-slate">{b.body}</p>
+                          {b.sent_by && <p className="text-[12px] text-slate/80">by {b.sent_by}</p>}
+                        </td>
+                        <td className={`${td} text-slate`}>{SEGMENT_LABEL[b.segment]}</td>
+                        <td className={td}>
+                          {b.tracked ? (
+                            <span className="flex flex-col items-start gap-1">
+                              <span className="flex flex-wrap gap-1">
+                                <Badge tone="info">
+                                  <CheckCheck className="h-3 w-3" /> {b.delivered_count}/{b.recipients} delivered
+                                </Badge>
+                                <Badge tone={b.read_count ? "good" : "neutral"}>
+                                  {b.read_count}/{b.recipients} read
+                                </Badge>
+                              </span>
+                              <button type="button" onClick={() => setOpenReport(open ? null : b.id)} aria-expanded={open} className="inline-flex cursor-pointer items-center gap-1 text-[12px] text-brass-dark hover:underline">
+                                {open ? "Hide who" : "See who"} <ChevronDown className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`} />
+                              </button>
+                            </span>
+                          ) : b.channel === "email" && b.delivery !== "manual" ? (
+                            <span className="flex flex-col items-start gap-1">
+                              {b.delivery === "sending" && <Badge tone="info">Email, sending…</Badge>}
+                              {b.delivery === "sent" && <Badge tone="good">Email, sent to all {b.recipients}</Badge>}
+                              {b.delivery === "partial" && <Badge tone="warn">Email, {b.failed} of {b.recipients} failed</Badge>}
+                              {b.delivery === "failed" && <Badge tone="bad">Email, none delivered</Badge>}
+                              {(b.delivery === "partial" || b.delivery === "failed") && (
+                                <button type="button" onClick={() => exportAgain(b)} className="cursor-pointer text-[12px] text-brass-dark hover:underline">
+                                  Export list to resend
+                                </button>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="flex flex-col items-start gap-1">
+                              <Badge tone="warn">{b.channel === "sms" ? "SMS" : "Email"}, sent by hand</Badge>
+                              <button type="button" onClick={() => exportAgain(b)} className="cursor-pointer text-[12px] text-brass-dark hover:underline">
+                                Export list again
+                              </button>
+                            </span>
+                          )}
+                        </td>
+                        <td className={`${td} text-right tabular-nums`}>{b.recipients}</td>
+                      </tr>
+                      {open && (
+                        <tr>
+                          <td colSpan={5} className="bg-paper-dim/50 px-4">
+                            <DeliveryReport id={b.id} onError={onError} />
+                          </td>
+                        </tr>
                       )}
-                    </td>
-                    <td className={`${td} text-right tabular-nums`}>{b.recipients}</td>
-                  </tr>
-                ))
+                    </Fragment>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -971,4 +1208,3 @@ export function MessagesSection({ onError }: { onError: OnError }) {
     </div>
   );
 }
-

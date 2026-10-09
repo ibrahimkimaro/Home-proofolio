@@ -1,0 +1,25 @@
+{
+  "image": {
+    "width": 2560,
+    "height": 1600
+  },
+  "screen_quad": {
+    "top_l": [
+      0.2,
+      0.046
+    ],
+    "top_r": [
+      0.8,
+      0.046
+    ],
+    "bot_r": [
+      0.8,
+      0.421
+    ],
+    "bot_l": [
+      0.2,
+      0.421
+    ]
+  },
+  "note": "screen_quad is normalised 0..1; map the live dashboard onto these four corners."
+}

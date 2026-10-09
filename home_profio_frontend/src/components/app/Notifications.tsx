@@ -3,15 +3,22 @@
 import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BadgeCheck, Bell, Building2, Megaphone, MessageCircle, ShieldAlert, UserPlus, type LucideIcon } from "lucide-react";
+import { BadgeCheck, Bell, Building2, FileText, KeyRound, Mail, Star, Megaphone, MessageCircle, PhoneMissed, ShieldAlert, UserPlus, Users, type LucideIcon } from "lucide-react";
 import {
+  acceptGroupInvite,
+  declineGroupInvite,
   fetchNotifications,
   markNotificationsRead,
   signOutOtherDevices,
   type AppNotification,
 } from "@/lib/api";
+import { NOTIFICATIONS_CHANGED } from "@/components/chat/ChatNotifier";
+import { OPEN_CODE_DIALOG } from "@/components/app/CodePrompt";
+import { OPEN_ACTIVATION } from "@/components/app/Activation";
+import { allowed, desktopAllowed, playAlert, playChime } from "@/lib/chime";
 
-const POLL_MS = 60_000;
+// A fallback: live events (invites, joins) reload the bell at once via NOTIFICATIONS_CHANGED.
+const POLL_MS = 180_000;
 
 const ICONS: Record<string, { icon: LucideIcon; cls: string }> = {
   follow: { icon: UserPlus, cls: "bg-sky-500/12 text-sky-600 dark:text-sky-400" },
@@ -19,7 +26,17 @@ const ICONS: Record<string, { icon: LucideIcon; cls: string }> = {
   activated: { icon: BadgeCheck, cls: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400" },
   signin: { icon: ShieldAlert, cls: "bg-berry/12 text-berry" },
   broadcast: { icon: Megaphone, cls: "bg-ink/8 text-ink-700" },
+  code: { icon: KeyRound, cls: "bg-brass/15 text-brass-dark" },
+  like: { icon: Star, cls: "bg-brass/15 text-brass-dark" },
+  comment: { icon: MessageCircle, cls: "bg-sky-500/12 text-sky-600 dark:text-sky-400" },
+  cv_request: { icon: FileText, cls: "bg-purple-500/12 text-purple-600 dark:text-purple-400" },
+  cv_sent: { icon: FileText, cls: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400" },
+  visitor_message: { icon: Mail, cls: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400" },
+  activation: { icon: KeyRound, cls: "bg-brass/15 text-brass-dark" },
   message: { icon: MessageCircle, cls: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400" },
+  call: { icon: PhoneMissed, cls: "bg-berry/12 text-berry" },
+  group_invite: { icon: Users, cls: "bg-purple-500/12 text-purple-600 dark:text-purple-400" },
+  group: { icon: Users, cls: "bg-purple-500/12 text-purple-600 dark:text-purple-400" },
 };
 
 function ago(iso: string) {
@@ -40,29 +57,52 @@ export function NotificationBell() {
   const [unread, setUnread] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [secured, setSecured] = useState<string | null>(null);
+  const [busyInvite, setBusyInvite] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const seen = useRef<Set<string> | null>(null); // ids already shown, to chime only for what is new
+
+  // Something new arrived while the page is open: a sound (the activation code gets the attention one), and a
+  // browser notification if the tab is in the background. Messages and invitations have their own alerts.
+  const announce = useCallback((n: AppNotification) => {
+    if (n.kind === "message" || n.kind === "group_invite" || n.kind === "call") return;
+    const important = n.kind === "activation" || n.kind === "code";
+    if (!allowed(important ? "code" : "activity")) return;
+    if (important) playAlert();
+    else playChime("activity");
+    if (important && document.visibilityState === "hidden" && desktopAllowed("code") && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      const note = new Notification(n.title, { body: n.body ?? undefined, tag: n.kind, icon: "/images/home-profolio-logo.jpeg" });
+      note.onclick = () => {
+        window.focus();
+        note.close();
+      };
+    }
+  }, []);
 
   const load = useCallback(() => {
     fetchNotifications()
       .then((r) => {
+        if (seen.current) r.items.filter((n) => !n.read && !seen.current!.has(n.id)).forEach(announce);
+        seen.current = new Set([...(seen.current ?? []), ...r.items.map((n) => n.id)]);
         setItems(r.items);
         setUnread(r.unread);
         setLoaded(true);
       })
       .catch(() => {});
-  }, []);
+  }, [announce]);
 
   // Fresh on open, every minute, when the tab comes back, and right after activation.
   useEffect(() => {
     load();
-    const id = setInterval(load, POLL_MS);
+    const id = setInterval(() => document.visibilityState === "visible" && load(), POLL_MS);
     const onFocus = () => document.visibilityState === "visible" && load();
     document.addEventListener("visibilitychange", onFocus);
     window.addEventListener("proofolio:activated", load);
+    window.addEventListener(NOTIFICATIONS_CHANGED, load);
     return () => {
       clearInterval(id);
       document.removeEventListener("visibilitychange", onFocus);
       window.removeEventListener("proofolio:activated", load);
+      window.removeEventListener(NOTIFICATIONS_CHANGED, load);
     };
   }, [load]);
 
@@ -82,7 +122,8 @@ export function NotificationBell() {
     const hit = (n: AppNotification) => ids === null || ids.includes(n.id);
     const newlyRead = items.filter((n) => hit(n) && !n.read).length;
     setUnread((u) => Math.max(0, u - newlyRead));
-    setItems((list) => list.map((n) => (hit(n) ? { ...n, read: true } : n)));
+    // Read means done: it leaves the panel (the server only sends unread ones, too).
+    setItems((list) => list.filter((n) => !hit(n)));
   }
 
   function openItem(n: AppNotification) {
@@ -90,7 +131,18 @@ export function NotificationBell() {
       readLocally([n.id]);
       markNotificationsRead([n.id]).catch(() => {});
     }
-    if (n.link) {
+    // A code notice opens the dialog to type the code, like the banner's button.
+    if (n.kind === "activation") {
+      setOpen(false);
+      window.dispatchEvent(new Event(OPEN_ACTIVATION));
+      return;
+    }
+    if (n.kind === "code") {
+      setOpen(false);
+      window.dispatchEvent(new Event(OPEN_CODE_DIALOG));
+      return;
+    }
+    if (n.link && n.kind !== "group_invite") {
       setOpen(false);
       router.push(n.link);
     }
@@ -101,6 +153,28 @@ export function NotificationBell() {
     readLocally([n.id]);
     markNotificationsRead([n.id]).catch(() => {});
     setSecured(n.id);
+  }
+
+  // The invite link is /chat?g=<group id>. Answering it updates the row on the server (it stops being an invite).
+  async function answerInvite(n: AppNotification, accept: boolean) {
+    const groupId = new URLSearchParams((n.link ?? "").split("?")[1] ?? "").get("g");
+    if (!groupId || busyInvite) return;
+    setBusyInvite(n.id);
+    try {
+      if (accept) {
+        const joined = await acceptGroupInvite(groupId);
+        setOpen(false);
+        load();
+        router.push(`/chat?c=${encodeURIComponent(joined.topic)}`);
+      } else {
+        await declineGroupInvite(groupId);
+        load();
+      }
+    } catch {
+      load();
+    } finally {
+      setBusyInvite(null);
+    }
   }
 
   return (
@@ -164,7 +238,7 @@ export function NotificationBell() {
             <ul className="max-h-[min(70vh,28rem)] overflow-y-auto">
               {loaded && items.length === 0 && (
                 <li className="px-6 py-10 text-center text-[14px] text-slate">
-                  Nothing yet. Follows, business decisions and sign-in alerts will show up here.
+                  You&apos;re all caught up. New messages, follows and alerts will show up here.
                 </li>
               )}
               {items.map((n) => {
@@ -203,9 +277,49 @@ export function NotificationBell() {
                               This wasn&apos;t me
                             </button>
                           ))}
+                        {n.kind === "group_invite" && (
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              type="button"
+                              disabled={busyInvite === n.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                answerInvite(n, true);
+                              }}
+                              className="cursor-pointer rounded-full bg-ink px-3.5 py-1 text-[12px] font-semibold text-paper transition-opacity hover:opacity-90 disabled:opacity-50"
+                            >
+                              Accept
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busyInvite === n.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                answerInvite(n, false);
+                              }}
+                              className="cursor-pointer rounded-full border border-hairline px-3.5 py-1 text-[12px] font-semibold text-ink-700 transition-colors hover:bg-paper-dim disabled:opacity-50"
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        )}
                         <p className="mt-1 text-[12px] text-slate/80">{ago(n.created_at)}</p>
                       </div>
-                      {!n.read && <span aria-label="Unread" className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-berry" />}
+                      {!n.read && (
+                        <button
+                          type="button"
+                          aria-label="Mark as read"
+                          title="Mark as read"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            readLocally([n.id]);
+                            markNotificationsRead([n.id]).catch(() => {});
+                          }}
+                          className="group -mr-1 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-paper-dim"
+                        >
+                          <span className="h-2 w-2 rounded-full bg-berry transition-transform group-hover:scale-125" />
+                        </button>
+                      )}
                     </div>
                   </li>
                 );
