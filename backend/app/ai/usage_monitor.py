@@ -76,12 +76,73 @@ DEFAULT_MODEL_SPECS = {
 }
 
 
-def get_model_specs(model_name: str | None = None) -> dict[str, Any]:
-    name = (model_name or settings.gemini_model or "gemini-3.5-flash-lite").lower()
-    for key, spec in GEMINI_MODEL_SPECS.items():
-        if key in name:
-            return spec
-    return DEFAULT_MODEL_SPECS
+def get_model_specs(model_name: str | None = None, provider: str = "gemini") -> dict[str, Any]:
+    provider = (provider or "gemini").lower()
+    name = (model_name or "").lower()
+
+    if provider in ("gemini", "google"):
+        if not name:
+            name = (getattr(settings, "gemini_model", None) or "gemini-3.5-flash-lite").lower()
+        for key, spec in GEMINI_MODEL_SPECS.items():
+            if key in name:
+                return spec
+        return {
+            "display_name": f"Google Gemini ({model_name or 'Default'})",
+            "rpm_limit": 15,
+            "tpm_limit": 250_000,
+            "rpd_limit": 1_500,
+            "context_window": 1_048_576,
+            "max_output_tokens": 8_192,
+            "tier": "Gemini Cloud API",
+        }
+
+    if provider == "ollama":
+        clean_name = model_name or getattr(settings, "ollama_model", "qwen2.5-coder:3b")
+        return {
+            "display_name": f"Ollama Local ({clean_name})",
+            "rpm_limit": 120,
+            "tpm_limit": 1_000_000,
+            "rpd_limit": 100_000,
+            "context_window": 131_072 if ("qwen" in clean_name.lower() or "llama" in clean_name.lower()) else 32_768,
+            "max_output_tokens": 8_192,
+            "tier": "Self-Hosted / Local Machine",
+        }
+
+    if provider == "deepseek":
+        clean_name = model_name or "deepseek-chat"
+        return {
+            "display_name": f"DeepSeek ({clean_name})",
+            "rpm_limit": 60,
+            "tpm_limit": 1_000_000,
+            "rpd_limit": 10_000,
+            "context_window": 64_000,
+            "max_output_tokens": 8_192,
+            "tier": "DeepSeek Cloud API",
+        }
+
+    if provider == "mistral":
+        clean_name = model_name or "mistral-small-latest"
+        return {
+            "display_name": f"Mistral AI ({clean_name})",
+            "rpm_limit": 60,
+            "tpm_limit": 500_000,
+            "rpd_limit": 10_000,
+            "context_window": 32_768,
+            "max_output_tokens": 8_192,
+            "tier": "Mistral Cloud API",
+        }
+
+    # Custom OpenAI-compatible or local bridges
+    clean_name = model_name or "Custom Endpoint"
+    return {
+        "display_name": f"Custom AI ({clean_name})",
+        "rpm_limit": 60,
+        "tpm_limit": 500_000,
+        "rpd_limit": 10_000,
+        "context_window": 32_768,
+        "max_output_tokens": 8_192,
+        "tier": "Custom OpenAI-Compatible",
+    }
 
 
 async def check_user_quota(db: AsyncSession, user_id: uuid.UUID | None) -> tuple[bool, str | None, AiUserQuota | None]:
@@ -170,7 +231,14 @@ async def record_ai_usage(
     if total_tokens <= 0:
         total_tokens = prompt_tokens + completion_tokens
 
-    active_model = model or getattr(settings, "gemini_model", "gemini-3.5-flash-lite") or "gemini-3.5-flash-lite"
+    if not model:
+        try:
+            from app.ai.engine import get_active_model_name
+            active_model = get_active_model_name()
+        except Exception:
+            active_model = getattr(settings, "gemini_model", "gemini-3.5-flash-lite") or "gemini-3.5-flash-lite"
+    else:
+        active_model = model
     log_entry = AiUsageLog(
         user_id=user_id,
         feature=feature,
@@ -263,7 +331,7 @@ async def get_ai_monitoring_overview(db: AsyncSession, days: int = 30) -> dict[s
     provider = (active_cfg.get("provider") or "gemini").lower()
     sub_cfg = active_cfg.get(provider) or {}
     active_model = sub_cfg.get("model") or getattr(settings, "gemini_model", "gemini-3.5-flash-lite")
-    specs = get_model_specs(active_model)
+    specs = get_model_specs(active_model, provider=provider)
     has_key = bool(sub_cfg.get("api_key") or getattr(settings, "gemini_api_key", None)) if provider != "ollama" else True
 
 

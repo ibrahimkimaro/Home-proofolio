@@ -21,6 +21,13 @@ const COLUMNS: FooterColumn[] = [
       { label: "Get started", href: "/start" },
     ],
   },
+  {
+    heading: "Legal",
+    links: [
+      { label: "Privacy Policy", href: "/privacy" },
+      { label: "Terms of Service", href: "/terms" },
+    ],
+  },
 ];
 
 /**
@@ -70,8 +77,12 @@ export function Footer({ variant = "light", columns = COLUMNS }: { variant?: "li
           </div>
         </div>
 
-        <div className={`mt-14 border-t pt-6 text-[13px] ${night ? "border-white/15 text-white/55" : "border-hairline text-slate"}`}>
-          &copy; {new Date().getFullYear()} Home Proofolio.
+        <div className={`mt-14 flex flex-col sm:flex-row items-center justify-between gap-4 border-t pt-6 text-[13px] ${night ? "border-white/15 text-white/55" : "border-hairline text-slate"}`}>
+          <div>&copy; {new Date().getFullYear()} Home Proofolio. All rights reserved.</div>
+          <div className="flex items-center gap-5">
+            <Link href="/privacy" className="hover:underline">Privacy Policy</Link>
+            <Link href="/terms" className="hover:underline">Terms of Service</Link>
+          </div>
         </div>
       </div>
     </footer>

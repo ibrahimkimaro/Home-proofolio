@@ -20,7 +20,7 @@ from app.ai.security_guard import SANDBOX_DIR
 from app.ai.support_agent import MAX_MESSAGE, support_reply, wait_seconds
 from app.ai.pdf_export import ADMIN_FILE, USER_FILE
 from app.ai.work_report import build_work_report
-from app.ai.engine import explain_error, get_engine, model_name
+from app.ai.engine import clean_ai_response_text, explain_error, get_engine, model_name
 from app.ai.admin_dashboard import build_dashboard
 from app.ai.mcp_client import general_tools, status as mcp_status
 from app.ai.python_tools import generate_chart
@@ -209,13 +209,14 @@ async def chat_stream(body: StreamChatIn, user: User = Depends(get_current_user)
                 async with AsyncSessionLocal() as wdb:
                     res = await asyncio.wait_for(
                         answer(get_engine(), wdb, user_id, who, body.message, history, on_state=on_state), AI_TURN_SECONDS)
-                    msg = AiChatMessage(id=uuid.uuid4(), session_id=session.id, role="assistant", content=res.text, created_at=datetime.now(timezone.utc))
+                    cleaned_text = clean_ai_response_text(res.text)
+                    msg = AiChatMessage(id=uuid.uuid4(), session_id=session.id, role="assistant", content=cleaned_text, created_at=datetime.now(timezone.utc))
                     wdb.add(msg)
                     saved = await wdb.get(AiChatSession, session.id)
                     if saved:
                         saved.updated_at = msg.created_at
                     await wdb.commit()
-                await queue.put({"reply": res.text, "message": _message_out(msg)})
+                await queue.put({"reply": cleaned_text, "message": _message_out(msg)})
             except asyncio.TimeoutError:
                 log.warning("AI chat timed out after %ss", AI_TURN_SECONDS)
                 await queue.put({"error": "The AI is taking too long to answer. Try a shorter question, or try again in a moment."})
@@ -249,11 +250,12 @@ async def support(body: SupportIn, request: Request):
         raise HTTPException(429, "You've sent a lot of messages. Please wait a few minutes, or tap Talk to a person.",
                             headers={"Retry-After": str(wait)})
     try:
-        result = await support_reply(get_engine(), body.message, body.history, body.name)
+        result, detected_name = await support_reply(get_engine(), body.message, body.history, body.name)
     except Exception as e:
         log.exception("AI support failed: %s", explain_error(e))
         raise HTTPException(503, "The assistant is unavailable right now. Please tap Talk to a person.")
-    return {"reply": result.text}
+    return {"reply": clean_ai_response_text(result.text), "name": detected_name}
+
 
 
 class DashboardIn(BaseModel):

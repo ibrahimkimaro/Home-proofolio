@@ -175,7 +175,7 @@ function IdentityBanner({ user, hello, data }: { user: User; hello: string; data
     ["Followers", data?.counts.followers],
     ["Proofs", data?.counts.proofs],
     ["Public items", data?.counts.public],
-    ["Days active", data?.counts.days_active],
+    ["Total likes", data?.counts.likes],
   ];
   return (
     <section className="pf-surface mx-auto w-full max-w-full rounded-2xl border border-hairline bg-paper shadow-sm overflow-hidden">

@@ -50,6 +50,7 @@ export interface CallState {
   canFlip: boolean; // more than one camera
 }
 
+const NO_PATH_MSG = "Couldn't connect. If you are on different networks, the server needs a TURN relay (see EXTERNAL_TURN_* in .env).";
 const CONNECT_TIMEOUT_MS = 30_000; // accepted -> media flowing
 const DISCONNECT_RESTART_MS = 2_000; // "disconnected" often heals by itself; restart ICE after this
 const RECONNECT_GIVE_UP_MS = 30_000;
@@ -316,7 +317,7 @@ async function join(s: Session, id: string, first: { to?: string; media?: CallMe
     const pc = ensurePeer(s);
     addLocalTracks(s, pc);
     announceMedia();
-    later(() => state?.phase === "connecting" && failed("Couldn't connect the call"), CONNECT_TIMEOUT_MS);
+    later(() => state?.phase === "connecting" && failed(NO_PATH_MSG), CONNECT_TIMEOUT_MS);
   });
   channel.on("signal", (msg: { description?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit | null }) => {
     s.queue = s.queue.then(() => handleSignal(s, msg)).catch((e) => console.warn("call signal", e));
@@ -339,7 +340,7 @@ async function join(s: Session, id: string, first: { to?: string; media?: CallMe
         ensurePeer(s);
         channel.push("ready", {});
         announceMedia();
-        later(() => state?.phase === "connecting" && failed("Couldn't connect the call"), CONNECT_TIMEOUT_MS);
+        later(() => state?.phase === "connecting" && failed(NO_PATH_MSG), CONNECT_TIMEOUT_MS);
       }
     })
     .receive("error", (e: { reason?: string }) => {
@@ -376,6 +377,8 @@ function sanitizeIceServers(servers: RTCIceServer[]): RTCIceServer[] {
     const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
     const filteredUrls = urls.filter((url) => {
       if (!url) return false;
+      // A relay URL with no host (e.g. "turn::3478") makes RTCPeerConnection throw.
+      if (/^turns?::/.test(url)) return false;
       // If we are on an HTTP tunnel, drop TURN URLs pointing to that tunnel because UDP/TCP 3478 is not forwarded
       if (isTunnel && (url.startsWith("turn:") || url.startsWith("turns:"))) {
         if (url.includes(currentHost) || url.includes("localhost") || url.includes("127.0.0.1")) {

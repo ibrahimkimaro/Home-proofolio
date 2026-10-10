@@ -79,13 +79,12 @@ defmodule RealtimeChat.Messages do
     if length(rows) > limit, do: {tl(rows), true}, else: {rows, false}
   end
 
-  @free_messages 5
+
 
   @doc """
-  Whether this member may use this conversation. A member who hasn't activated their account yet may send
-  #{@free_messages} messages to other members (support is always open); once their 15 minutes after the code are up they
+  Whether this member may use this conversation. A member who hasn't activated their account yet may message other members without a cap (support is always open); once their 15 minutes after the code are up they
   are suspended: support only. `recipient` is the other person of a 1:1 chat (nil in a group); `cid` lets a resend of an
-  already stored message through. Returns :ok, {:error, :suspended} or {:error, :limit}.
+  already stored message through. Returns :ok, {:error, :suspended}.
   """
   def gate(user_id, recipient, cid \\ nil) do
     sql = """
@@ -100,11 +99,10 @@ defmodule RealtimeChat.Messages do
     """
 
     case Postgrex.query(@db, sql, [user_id, recipient, cid]) do
-      {:ok, %{rows: [[true, suspended, to_admin, sent, resend]]}} ->
+      {:ok, %{rows: [[true, suspended, to_admin, _sent, _resend]]}} ->
         cond do
           to_admin -> :ok
           suspended -> {:error, :suspended}
-          sent >= @free_messages and not resend -> {:error, :limit}
           true -> :ok
         end
 

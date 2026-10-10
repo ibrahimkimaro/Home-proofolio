@@ -9,6 +9,7 @@ from app.api.deps import ensure_can_publish, get_current_user
 from app.api.uploads import IMAGES, save_upload
 from app.core.database import get_db
 from app.models.business import Business, Follow, Role
+from app.models.engage import Like
 from app.models.profile import Profile, Visibility
 from app.models.user import User
 from app.models.work import WorkEvent, WorkItem
@@ -28,6 +29,7 @@ class HomeCounts(BaseModel):
     proofs: int
     public: int
     days_active: int
+    likes: int = 0  # stars received on the profile and on all of the member's work
     followers: int
 
 
@@ -62,6 +64,13 @@ async def get_home(user: User = Depends(get_current_user), db: AsyncSession = De
         if b:
             lists[b].append(w)
 
+    work_ids = [w.id for w in works]
+    likes = await db.scalar(
+        select(func.count()).select_from(Like).where(
+            ((Like.target_kind == "profile") & (Like.target_id == user.id))
+            | ((Like.target_kind == "work") & Like.target_id.in_(work_ids or [user.id]))
+        )
+    )
     live = [w for w in works if w.status != "archived"]
     followers = await db.scalar(select(func.count()).select_from(Follow).where(Follow.user_id == user.id))
     role_rows = await db.execute(
@@ -77,6 +86,7 @@ async def get_home(user: User = Depends(get_current_user), db: AsyncSession = De
             proofs=sum(len(w.evidence_links or []) for w in live),
             public=sum(1 for w in live if w.visibility == Visibility.PUBLIC and w.work_type != "capture"),
             days_active=days_active or 0,
+            likes=likes or 0,
             followers=followers or 0,
         ),
         roles=roles,

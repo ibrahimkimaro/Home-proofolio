@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { MotionPrefs } from "@/components/MotionPrefs";
+import { VisitTracker } from "@/components/VisitTracker";
 
 const inter = Inter({
   variable: "--font-body",
@@ -81,6 +82,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body className="min-h-full flex flex-col bg-paper text-ink-800">
         <MotionPrefs>{children}</MotionPrefs>
+        <VisitTracker />
       </body>
     </html>
   );

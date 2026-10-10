@@ -59,3 +59,19 @@ export function rememberGuestName(name: string | null): void {
     if (name) localStorage.setItem(NAME_KEY, name);
   } catch {}
 }
+
+const EMAIL_KEY = "proofolio_guest_email";
+
+export function readGuestEmail(): string | null {
+  try {
+    return localStorage.getItem(EMAIL_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function rememberGuestEmail(email: string | null): void {
+  try {
+    if (email) localStorage.setItem(EMAIL_KEY, email);
+  } catch {}
+}

@@ -366,7 +366,7 @@ export default function AiPage() {
         </div>
 
         {/* FLOATING BOTTOM DOCK */}
-        <div className="fixed bottom-3 left-0 right-0 z-40 flex justify-center px-3 pointer-events-none md:left-64 sm:bottom-5 sm:px-4">
+        <div className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom,0px)+0.5rem)] left-0 right-0 z-40 flex justify-center px-3 pointer-events-none md:bottom-5 md:left-64 sm:px-4">
           <div className="pointer-events-auto flex w-full max-w-3xl flex-col items-center gap-2">
             {error && (
               <div role="alert" className="flex w-full items-start gap-2 rounded-2xl border border-berry/30 bg-berry/10 p-2.5 text-[12px] text-berry shadow-lg backdrop-blur-xl">

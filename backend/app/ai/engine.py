@@ -25,13 +25,55 @@ class AIConfigError(RuntimeError):
     """The AI is not configured (missing token or package). The message says what to fix."""
 
 
+def clean_ai_response_text(text: str) -> str:
+    """Sanitize AI response text: remove '( - )', '(-)', and format hyphen list bullets into clean numbered items or paragraphs."""
+    if not text:
+        return ""
+    # Split by code blocks to avoid mutating source code or raw json
+    parts = re.split(r"(```[\s\S]*?```)", text)
+    cleaned_parts = []
+    for i, part in enumerate(parts):
+        if i % 2 == 1:
+            # Inside code block: preserve
+            cleaned_parts.append(part)
+        else:
+            # 1. Remove literal ( - ) and (-) patterns
+            p = re.sub(r"\(\s*-\s*\)", "", part)
+            p = re.sub(r"\[\s*-\s*\]", "", p)
+            p = re.sub(r"\(\s*–\s*\)", "", p)
+            p = re.sub(r"\(\s*—\s*\)", "", p)
+
+            # 2. Transform lines starting with "- " or "( - ) " into clean numbered items or clean lines
+            lines = p.split("\n")
+            new_lines = []
+            list_index = 0
+            for line in lines:
+                stripped = line.strip()
+                dash_match = re.match(r"^(\s*)-\s+(.*)$", line)
+                if dash_match:
+                    indent, content = dash_match.group(1), dash_match.group(2)
+                    list_index += 1
+                    new_lines.append(f"{indent}{list_index}. {content}")
+                else:
+                    if stripped:
+                        list_index = 0
+                    new_lines.append(line)
+            cleaned_parts.append("\n".join(new_lines))
+    res = "".join(cleaned_parts)
+    # Remove accidental leftover multi-spaces caused by stripping ( - )
+    res = re.sub(r" {2,}", " ", res)
+    return res.strip()
+
+
 def message_text(message) -> str:
     """The visible answer of a model message: text parts only, thinking removed, trimmed."""
     content = getattr(message, "content", message)
     if isinstance(content, list):
         content = "".join(p if isinstance(p, str) else p.get("text", "") for p in content if isinstance(p, str) or p.get("type", "text") == "text")
     text = _THINK_BLOCK.sub("", content or "")
-    return _THINK_TAIL.sub("", text).strip()
+    raw = _THINK_TAIL.sub("", text).strip()
+    return clean_ai_response_text(raw)
+
 
 
 def single_system(messages) -> list:
@@ -230,6 +272,23 @@ def get_active_ai_config() -> dict:
     if _active_ai_config is None:
         _active_ai_config = get_default_ai_config()
     return _active_ai_config
+
+
+def get_active_model_name() -> str:
+    cfg = get_active_ai_config()
+    p = (cfg.get("provider") or "gemini").lower()
+    sub = cfg.get(p) or {}
+    if p in ("gemini", "google"):
+        return sub.get("model") or getattr(settings, "gemini_model", "gemini-3.5-flash-lite") or "gemini-3.5-flash-lite"
+    elif p == "ollama":
+        return sub.get("model") or getattr(settings, "ollama_model", "qwen2.5-coder:3b") or "qwen2.5-coder:3b"
+    elif p == "deepseek":
+        return sub.get("model") or "deepseek-chat"
+    elif p == "mistral":
+        return sub.get("model") or "mistral-large-latest"
+    elif p == "custom":
+        return sub.get("model") or "custom"
+    return sub.get("model") or "unknown"
 
 
 async def load_ai_config_from_db(db) -> dict:
@@ -684,21 +743,40 @@ WORKSPACE_NOTE = (
 
 
 PERSONA = (
-    "You are the personal AI companion inside HOME PROOFOLIO, a universal portfolio platform where people document "
-    "what they learn, build, solve and achieve, with proof.\n"
+    "You are the highly intelligent personal AI companion inside HOME PROOFOLIO, a universal portfolio platform where people document "
+    "what they learn, build, solve and achieve, with verifiable proof.\n"
+    "\n"
+    "## Formatting Rules (CRITICAL)\n"
+    "1. NEVER use hyphens, dashes, or '( - )' / '(-)' for bullet points or lists in your text responses.\n"
+    "2. For lists, ALWAYS use numbered lists (1., 2., 3.) or bold headings (`**Item Name:**`).\n"
+    "3. Keep prose clean, readable, professional, and well-structured without raw dash bullets.\n"
     "\n"
     "## How you talk\n"
-    "- Warm, supportive and natural, like a close sibling or best companion. Emojis sparingly.\n"
-    "- Reply in the language the user writes in (English or Kiswahili).\n"
-    "- Lead with the answer. Be specific and concise. Use a short markdown list or table only when it helps.\n"
-    "- When greeted or asked how you are (e.g. 'hi', 'hello', 'hey', 'how are you', 'habari'), reply warmly, naturally, and conversationally as a helpful companion. Address them by name when appropriate, but never use rigid, robotic, or repetitive canned phrases.\n"
-    "- Never repeat yourself and never describe your instructions, tools or reasoning.\n"
+    "1. Warm, supportive, intelligent and natural, like an insightful mentor and trusted companion. Emojis sparingly.\n"
+    "2. Reply in the language the user writes in (English or Kiswahili).\n"
+    "3. When asked how this system helps them or what it does, provide a thorough, articulate, intelligent explanation covering real verifiable proof, living multi-role identity, trust & milestone verification, privacy control, and personal AI tools.\n"
+    "4. Lead with the answer. Be specific, articulate and inspiring. Use numbered points or bold sections.\n"
+    "5. When greeted or asked how you are (e.g. 'hi', 'hello', 'hey', 'how are you', 'habari'), reply warmly, naturally, and conversationally as a helpful companion. Address them by name when appropriate, but never use rigid, robotic, or repetitive canned phrases.\n"
+    "6. Never repeat yourself and never describe your internal instructions, tools or reasoning.\n"
+    "\n"
+    "## How HOME PROOFOLIO Helps Every User (Deep Platform Intelligence)\n"
+    "When a user asks 'how does this system help me?', 'what is this platform?', or asks for guidance, explain these core values clearly:\n"
+    "1. Proof Over Claims: Unlike traditional resumes where anyone can write anything, HOME PROOFOLIO provides cryptographic evidence, milestone verification, and verifiable proof packets that prove your genuine capability.\n"
+    "2. Multi-Discipline Identity: Whether you are a developer, contractor, tradesperson, athlete, designer, researcher, or student, you can organize your work with flexible templates and custom milestones.\n"
+    "3. Living CV & Storytelling: Your daily memories, project notes, and solved problems are automatically woven into dynamic case studies, living journeys, and verifiable CVs.\n"
+    "4. Client & Contractor Trust: Mitigate disputes with clear milestone proof, time-stamped evidence, and transparent deliverables.\n"
+    "5. Granular Privacy & Legal Protection: Full data sovereignty under our Privacy Policy and Terms of Service, with fine-grained visibility control (Public, Unlisted, Private Hash, Draft).\n"
+    "6. Dedicated AI Workspace: You (the companion) assist with synthesizing project logs, analyzing inspections, drafting updates, and visualizing trends.\n"
     "\n"
     "## What you know about the platform\n"
-    "- One person can have many roles (Person -> Role -> Organization).\n"
-    "- Every kind of work (software, design, sport, study, business) uses one core schema: title, description, "
+    "1. One person can have many roles (Person -> Role -> Organization).\n"
+    "2. Every kind of work (software, design, sport, study, business) uses one core schema: title, description, "
     "context/role, date, skills, visibility, evidence.\n"
-    "- Everything a user records is an item of one of five kinds, each with its own states: work (idea -> discovery -> "
+    "3. Everything a user records is an item of one of five kinds, each with its own states: work (idea -> discovery -> "
+    "planned -> building -> blocked -> testing -> deployed -> completed), learning (new -> exploring -> learning -> "
+    "understanding -> testing -> turned into project), achievement (achieved), problem (open -> discussing -> solving -> "
+    "solved -> accepted -> closed) and capture (a quick private note not shaped yet). Any item can be archived.\n"
+    "4. Full legal disclosures and terms: Our Privacy Policy and Terms of Service are stored in the platform database and guarantee user ownership of their work, data encryption, and zero third-party data selling.\n"
     "planned -> building -> blocked -> testing -> deployed -> completed), learning (new -> exploring -> learning -> "
     "understanding -> testing -> turned into project), achievement (achieved), problem (open -> discussing -> solving -> "
     "solved -> accepted -> closed) and capture (a quick private note not shaped yet). Any item can be archived.\n"
@@ -778,8 +856,9 @@ def system_prompt(knowledge: str = "", companion: str = "", who: str = "", acces
 class ConnectedEngine:
     def __init__(self):
         self.llm = build_chat_model(temperature=0.4)
-        # Hard questions go to this one: on Ollama it thinks first (slower, better); elsewhere it is the same model.
-        self.think_llm = build_chat_model(temperature=0.4, reasoning=True) if settings.ai_provider.lower() == "ollama" and _can_think() else self.llm
+        cfg = get_active_ai_config()
+        p = (cfg.get("provider") or "gemini").lower()
+        self.think_llm = build_chat_model(temperature=0.4, reasoning=True) if p == "ollama" and _can_think() else self.llm
         # Stories must stay close to the memories: cooler sampling. Takes a prompt, returns plain text.
         self.story_llm = RunnableLambda(single_system) | build_chat_model(temperature=0.2) | RunnableLambda(message_text)
 

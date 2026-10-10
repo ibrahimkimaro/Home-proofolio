@@ -34,6 +34,8 @@ from app.api.admin_manage import router as admin_manage_router
 from app.api.onboarding import router as onboarding_router
 from app.api.profiles import router as profiles_router
 from app.api.uploads import router as uploads_router
+from app.api.legal import router as legal_router
+from app.api.site_visits import router as site_visits_router
 from app.api.work import router as work_router, templates_router
 from app.core.config import settings
 from app.core import monitor
@@ -103,6 +105,8 @@ app.include_router(groups_router)
 app.include_router(chat_files_router)
 app.include_router(cv_router)
 app.include_router(uploads_router)
+app.include_router(legal_router)
+app.include_router(site_visits_router)
 app.include_router(GraphQLRouter(schema, context_getter=get_context), prefix="/graphql")
 
 

@@ -17,6 +17,8 @@ from app.models.user import User
 from app.models.work import Upload, WorkEvent, WorkItem, WorkTemplate
 
 from app.models.discussion import Discussion, DiscussionReply, DiscussionVote
+from app.models.legal import LegalDocument
+from app.models.visit import SiteVisit
 
 __all__ = [
     "User", "Guest", "Profile", "Visibility", "Session", "WorkItem", "WorkEvent",
@@ -26,6 +28,6 @@ __all__ = [
     "Notification", "SecurityEvent", "BlockedIp", "Broadcast", "ChatMessage", "ChatGroup",
     "ChatGroupMember", "Cv", "Companion", "Memory", "Story", "StoryChapter",
     "AiChatSession", "AiChatMessage", "AiUsageLog", "AiUserQuota", "PushSubscription", "ChatPin", "ChatClear", "Like", "Comment", "CvRequest", "VisitorMessage",
-    "Discussion", "DiscussionReply", "DiscussionVote"
+    "Discussion", "DiscussionReply", "DiscussionVote", "LegalDocument", "SiteVisit"
 ]
 

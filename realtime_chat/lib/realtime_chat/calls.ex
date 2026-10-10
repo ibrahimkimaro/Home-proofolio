@@ -124,7 +124,8 @@ defmodule RealtimeChat.Calls do
          String.contains?(host, "trycloudflare.com"))
 
     # Only use host for local coturn if turn_host is explicitly set OR host is a real local/LAN host.
-    turn_host_candidate = cfg[:turn_host] || (if not is_tunnel, do: host, else: nil)
+    configured_host = if cfg[:turn_host] not in [nil, ""], do: cfg[:turn_host]
+    turn_host_candidate = configured_host || (if not is_tunnel and host not in [nil, ""], do: host, else: nil)
     h = if turn_host_candidate, do: bracket(turn_host_candidate), else: nil
     port = cfg[:turn_port] || 3478
 

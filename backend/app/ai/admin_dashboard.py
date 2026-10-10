@@ -414,8 +414,9 @@ async def build_dashboard(engine: ConnectedEngine, db: AsyncSession, admin_name:
     mode: "chat" = plain conversation (default), "build" = dashboard of charts, "prepare" = written piece, "video" = storyboard, "image" = prompt design.
     """
     from app.ai.usage_monitor import record_ai_usage
-    from app.ai.engine import load_ai_config_from_db
+    from app.ai.engine import load_ai_config_from_db, get_active_model_name
     await load_ai_config_from_db(db)
+    active_model = get_active_model_name()
     started = time.perf_counter()
 
     prompt = sanitize_user_prompt(prompt.strip())
@@ -429,6 +430,7 @@ async def build_dashboard(engine: ConnectedEngine, db: AsyncSession, admin_name:
             user_id=admin_id,
             feature=f"admin_{mode}",
             endpoint="/ai/admin/dashboard",
+            model=active_model,
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
             total_tokens=result.total_tokens,
@@ -444,6 +446,7 @@ async def build_dashboard(engine: ConnectedEngine, db: AsyncSession, admin_name:
             user_id=admin_id,
             feature=f"admin_{mode}",
             endpoint="/ai/admin/dashboard",
+            model=active_model,
             latency_ms=int(elapsed_sec * 1000),
             status=status_flag,
             error_message=str(exc)[:400],

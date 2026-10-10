@@ -6,13 +6,11 @@ import {
   AdminOtpLog,
   AdminStats,
   AdminUser,
-  AdminWork,
   ApiError,
   User,
   fetchAdminOtps,
   fetchAdminStats,
   fetchAdminUsers,
-  fetchAdminWorks,
   fetchCurrentUser,
   loginUser,
   logoutUser,
@@ -23,13 +21,13 @@ import { LogoutModal } from "@/components/app/LogoutModal";
 import { AdminShell, NAV, type AdminSection } from "@/components/admin/AdminShell";
 import { OverviewSection } from "@/components/admin/OverviewSection";
 import { UsersSection } from "@/components/admin/UsersSection";
-import { WorksSection } from "@/components/admin/WorksSection";
 import { SecuritySection } from "@/components/admin/SecuritySection";
 import { AnalyticsSection } from "@/components/admin/AnalyticsSection";
 import { AiSection } from "@/components/admin/AiSection";
 import { AiMonitoringSection } from "@/components/admin/AiMonitoringSection";
 import { OnboardingSection } from "@/components/admin/OnboardingSection";
 import { AuditSection, BusinessesSection, PlatformSection, TemplatesSection } from "@/components/admin/ManageSections";
+import { LegalSection } from "@/components/admin/LegalSection";
 import { SupportSection } from "@/components/admin/SupportSection";
 import { ChatNotifier, unreadTotal, useChatInbox } from "@/components/chat/ChatNotifier";
 import { CallOverlay } from "@/components/chat/CallOverlay";
@@ -91,7 +89,6 @@ function AdminDashboard({ admin, onLogout }: { admin: User; onLogout: () => void
   const [section, setSection] = useState<AdminSection>(sectionFromHash);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
-  const [works, setWorks] = useState<AdminWork[]>([]);
   const [otps, setOtps] = useState<AdminOtpLog[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -112,15 +109,13 @@ function AdminDashboard({ admin, onLogout }: { admin: User; onLogout: () => void
 
   const loadData = useCallback(async () => {
     try {
-      const [s, u, w, o] = await Promise.all([
+      const [s, u, o] = await Promise.all([
         fetchAdminStats(),
         fetchAdminUsers(),
-        fetchAdminWorks(),
         fetchAdminOtps(100),
       ]);
       setStats(s);
       setUsers(u);
-      setWorks(w);
       setOtps(o);
       setLastUpdated(new Date());
       setError(null);
@@ -149,7 +144,7 @@ function AdminDashboard({ admin, onLogout }: { admin: User; onLogout: () => void
     <AdminShell
       section={section}
       onNavigate={navigate}
-      counts={{ users: users.length, works: works.length, security: otps.length, support: unreadTotal(inbox) }}
+      counts={{ users: users.length, security: otps.length, support: unreadTotal(inbox) }}
       admin={admin}
       onLogout={() => setLogoutModalOpen(true)}
       onRefresh={refresh}
@@ -167,12 +162,11 @@ function AdminDashboard({ admin, onLogout }: { admin: User; onLogout: () => void
       )}
 
       {section === "overview" && (
-        <OverviewSection stats={stats} users={users} works={works} otps={otps} onNavigate={navigate} />
+        <OverviewSection stats={stats} users={users} otps={otps} onNavigate={navigate} />
       )}
       {section === "users" && (
         <UsersSection users={users} currentAdminId={admin.id} onChanged={loadData} onError={setError} />
       )}
-      {section === "works" && <WorksSection works={works} onChanged={loadData} onError={setError} />}
       {section === "security" && <SecuritySection otps={otps} onChanged={loadData} onError={setError} />}
       {section === "analytics" && <AnalyticsSection onError={setError} />}
       {section === "ai" && <AiSection onError={setError} />}
@@ -181,6 +175,7 @@ function AdminDashboard({ admin, onLogout }: { admin: User; onLogout: () => void
       {section === "templates" && <TemplatesSection onError={setError} />}
       {section === "businesses" && <BusinessesSection onError={setError} />}
       {section === "platform" && <PlatformSection onError={setError} />}
+      {section === "legal" && <LegalSection onError={setError} />}
       {section === "audit" && <AuditSection onError={setError} />}
       {section === "threats" && <ThreatsSection onError={setError} />}
       {section === "devices" && <DevicesSection onError={setError} />}

@@ -6,7 +6,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   LayoutDashboard,
   Users,
-  Briefcase,
   LogOut,
   Menu,
   X,
@@ -29,6 +28,7 @@ import {
   LifeBuoy,
   Sparkles,
   Cpu,
+  ScrollText,
   type LucideIcon,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -41,11 +41,11 @@ export type AdminSection =
   | "ai"
   | "ai_monitoring"
   | "users"
-  | "works"
   | "businesses"
   | "onboarding"
   | "templates"
   | "platform"
+  | "legal"
   | "security"
   | "threats"
   | "devices"
@@ -65,13 +65,13 @@ export const NAV: NavItem[] = [
   { id: "health", group: "Insights", label: "System health", icon: Activity, description: "Is the app up, how fast and how busy" },
 
   { id: "users", group: "People & content", label: "Users", icon: Users, description: "Manage accounts, roles and access" },
-  { id: "works", group: "People & content", label: "Works & Proofs", icon: Briefcase, description: "Moderate every work item on the platform" },
   { id: "support", group: "People & content", label: "Support", icon: LifeBuoy, description: "Live chat with members who need a person" },
   { id: "chat", group: "People & content", label: "Chat analytics", icon: MessagesSquare, description: "Live chat activity in numbers only: no messages, no names" },
   { id: "businesses", group: "People & content", label: "Businesses", icon: Building2, description: "Business, school and club pages" },
   { id: "onboarding", group: "Configure", label: "Onboarding", icon: ListChecks, description: "Steps, questions and disciplines new members see" },
   { id: "templates", group: "Configure", label: "Work templates", icon: LayoutTemplate, description: "The fields each kind of work asks for" },
   { id: "platform", group: "Configure", label: "Platform", icon: Settings2, description: "Sign-ups and the site-wide announcement" },
+  { id: "legal", group: "Configure", label: "Legal & Policies", icon: ScrollText, description: "Manage Privacy Policy, Terms of Service and legal disclosures" },
   { id: "messages", group: "Configure", label: "Messages", icon: Megaphone, description: "Message groups of members in-app, by SMS or email" },
   { id: "threats", group: "Security", label: "Threats", icon: ShieldAlert, description: "Sign-in activity, attack alerts and blocked addresses" },
   { id: "devices", group: "Security", label: "Devices", icon: MonitorSmartphone, description: "Every signed-in device, with remote sign-out" },

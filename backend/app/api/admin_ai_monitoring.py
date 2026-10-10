@@ -36,12 +36,36 @@ async def get_monitoring_data(
 
 
 @router.get("/probe")
-async def probe_gemini_status(
+async def probe_active_ai_status(
     model: str | None = Query(default=None),
     admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Execute a real-time live ping to Google Gemini API to inspect latency, quota availability, and model status."""
-    return await probe_gemini_api(model_name=model)
+    """Execute a real-time live ping to the active AI provider (Gemini, Ollama, DeepSeek, Mistral, or Custom) to inspect latency and connection status."""
+    from app.ai.engine import load_ai_config_from_db, test_ai_provider_connection
+    cfg = await load_ai_config_from_db(db)
+    provider = (cfg.get("provider") or "gemini").lower()
+
+    if provider in ("gemini", "google"):
+        active_model = model or cfg.get("gemini", {}).get("model")
+        return await probe_gemini_api(model_name=active_model)
+
+    test_cfg = dict(cfg)
+    if model:
+        sub = dict(test_cfg.get(provider, {}))
+        sub["model"] = model
+        test_cfg[provider] = sub
+    res = await test_ai_provider_connection(test_cfg)
+    return {
+        "ok": res.get("ok", False),
+        "status": "healthy" if res.get("ok") else "error",
+        "provider": provider,
+        "model": model or cfg.get(provider, {}).get("model", ""),
+        "display_name": f"{provider.capitalize()} ({model or cfg.get(provider, {}).get('model', '')})",
+        "latency_ms": res.get("latency_ms", 0),
+        "message": res.get("message", res.get("reply", "Connection successful")),
+        "error": res.get("error"),
+    }
 
 
 @router.put("/users/{user_id}/quota")

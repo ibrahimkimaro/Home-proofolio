@@ -77,6 +77,8 @@ export function AiMonitoringSection({ onError }: Props) {
   // Filtering & Search
   const [userSearch, setUserSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "disabled" | "high">("all");
+  const [userPage, setUserPage] = useState(1);
+  const USERS_PER_PAGE = 10;
 
   // Edit Quota Modal
   const [selectedUser, setSelectedUser] = useState<AiMonitoringUser | null>(null);
@@ -91,11 +93,11 @@ export function AiMonitoringSection({ onError }: Props) {
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [aiConfig, setAiConfig] = useState<AiProviderConfig | null>(null);
   const [draftConfig, setDraftConfig] = useState<AiProviderConfig>({
-    provider: "gemini",
-    gemini: { api_key: "", model: "gemini-2.5-flash" },
+    provider: "ollama",
+    gemini: { api_key: "", model: "gemini-3.5-flash-lite" },
     deepseek: { api_key: "", model: "deepseek-chat", base_url: "https://api.deepseek.com/v1" },
     mistral: { api_key: "", model: "mistral-small-latest", base_url: "https://api.mistral.ai/v1" },
-    ollama: { base_url: "http://host.docker.internal:11435", model: "qwen2.5-coder:3b" },
+    ollama: { base_url: "http://host.docker.internal:11434", model: "qwen3.5:7b" },
     custom: { base_url: "", api_key: "", model: "" },
     temperature: 0.4,
     max_tokens: 4096,
@@ -123,7 +125,7 @@ export function AiMonitoringSection({ onError }: Props) {
     setLocalModelsLoading(true);
     setLocalModelsError(null);
     try {
-      const ep = customEndpoint || draftConfig.ollama?.base_url || "http://host.docker.internal:11435";
+      const ep = customEndpoint || draftConfig.ollama?.base_url || "http://host.docker.internal:11434";
       const res = await fetchLocalModels(ep);
       if (res.ok) {
         setLocalModels(res.models || []);
@@ -147,7 +149,7 @@ export function AiMonitoringSection({ onError }: Props) {
   const handleBenchmarkModel = async (modelName: string) => {
     setBenchmarkingModel(modelName);
     try {
-      const ep = draftConfig.ollama?.base_url || "http://host.docker.internal:11435";
+      const ep = draftConfig.ollama?.base_url || "http://host.docker.internal:11434";
       const res = await benchmarkLocalModel({
         model: modelName,
         prompt: benchmarkPrompt,
@@ -179,7 +181,7 @@ export function AiMonitoringSection({ onError }: Props) {
   const handleSelectModel = async (modelName: string) => {
     setSelectingModel(modelName);
     try {
-      const ep = draftConfig.ollama?.base_url || "http://host.docker.internal:11435";
+      const ep = draftConfig.ollama?.base_url || "http://host.docker.internal:11434";
       const res = await selectLocalModel({
         model: modelName,
         endpoint: ep,
@@ -207,13 +209,13 @@ export function AiMonitoringSection({ onError }: Props) {
     try {
       const cfg = await fetchAiConfig();
       setAiConfig(cfg);
-      const ollamaUrl = cfg.ollama?.base_url || "http://host.docker.internal:11435";
+      const ollamaUrl = cfg.ollama?.base_url || "http://host.docker.internal:11434";
       setDraftConfig({
-        provider: cfg.provider || "gemini",
-        gemini: { api_key: cfg.gemini?.api_key || "", model: cfg.gemini?.model || "gemini-2.5-flash" },
+        provider: cfg.provider || "ollama",
+        gemini: { api_key: cfg.gemini?.api_key || "", model: cfg.gemini?.model || "gemini-3.5-flash-lite" },
         deepseek: { api_key: cfg.deepseek?.api_key || "", model: cfg.deepseek?.model || "deepseek-chat", base_url: cfg.deepseek?.base_url || "https://api.deepseek.com/v1" },
         mistral: { api_key: cfg.mistral?.api_key || "", model: cfg.mistral?.model || "mistral-small-latest", base_url: cfg.mistral?.base_url || "https://api.mistral.ai/v1" },
-        ollama: { base_url: ollamaUrl, model: cfg.ollama?.model || "qwen2.5-coder:3b" },
+        ollama: { base_url: ollamaUrl, model: cfg.ollama?.model || "qwen3.5:7b" },
         custom: { base_url: cfg.custom?.base_url || "", api_key: cfg.custom?.api_key || "", model: cfg.custom?.model || "" },
         temperature: cfg.temperature ?? 0.4,
         max_tokens: cfg.max_tokens ?? 4096,
@@ -286,6 +288,14 @@ export function AiMonitoringSection({ onError }: Props) {
     loadMonitoring();
   }, [loadMonitoring]);
 
+  // Live telemetry: poll silently so new logs appear without a manual refresh
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") loadMonitoring(true);
+    }, 5000);
+    return () => clearInterval(id);
+  }, [loadMonitoring]);
+
   const handleProbe = async () => {
     setProbing(true);
     setProbeResult(null);
@@ -348,7 +358,7 @@ export function AiMonitoringSection({ onError }: Props) {
       <div className="flex h-96 items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-brass-dark" />
-          <p className="text-sm font-medium text-slate">Connecting to Gemini AI usage telemetry…</p>
+          <p className="text-sm font-medium text-slate">Connecting to AI usage telemetry…</p>
         </div>
       </div>
     );
@@ -372,6 +382,13 @@ export function AiMonitoringSection({ onError }: Props) {
     return true;
   });
 
+  const totalUserPages = Math.max(1, Math.ceil(filteredUsers.length / USERS_PER_PAGE));
+  const currentUserPage = Math.min(userPage, totalUserPages);
+  const pagedUsers = filteredUsers.slice(
+    (currentUserPage - 1) * USERS_PER_PAGE,
+    currentUserPage * USERS_PER_PAGE
+  );
+
   const rpdLimit = data.rate_limits?.rpd_limit || 1500;
   const reqToday = data.usage_today?.requests_count || 0;
   const rpdPercentUsed = Math.min(100, Math.round((reqToday / rpdLimit) * 100));
@@ -386,13 +403,13 @@ export function AiMonitoringSection({ onError }: Props) {
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-bold text-ink-800">Gemini Model & API Telemetry</h2>
+              <h2 className="text-lg font-bold text-ink-800">LLM Model & API Telemetry</h2>
               <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                 Live Telemetry
               </span>
               <span className="rounded-md border border-hairline bg-paper-dim px-2 py-0.5 text-xs font-medium text-slate">
-                Model: <strong className="text-ink-800">{data.model}</strong>
+                Model: <strong className="font-mono text-ink-800">{data.model_specs?.display_name || data.model}</strong>
               </span>
             </div>
             <p className="mt-0.5 text-xs text-slate">
@@ -402,25 +419,70 @@ export function AiMonitoringSection({ onError }: Props) {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* 1-Click Quick Provider Switcher */}
+          <div className="flex items-center gap-1 rounded-xl border border-hairline bg-paper-dim/80 p-1 text-xs">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await selectLocalModel({ model: "qwen3.5:7b", endpoint: "http://host.docker.internal:11434" });
+                  await loadMonitoring(true);
+                } catch (e) {
+                  onError("Failed to activate Qwen 3.5");
+                }
+              }}
+              className={`cursor-pointer rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${
+                data.provider === "ollama" && data.model === "qwen3.5:7b"
+                  ? "bg-purple-600 text-white shadow-xs"
+                  : "bg-paper text-slate hover:text-ink-800"
+              }`}
+              title="Switch platform AI to Qwen 3.5 (7B) on host Ollama"
+            >
+              🦙 Qwen 3.5
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await updateAiConfig({
+                    provider: "gemini",
+                    gemini: { api_key: "", model: "gemini-3.5-flash-lite" },
+                  });
+                  await loadMonitoring(true);
+                } catch (e) {
+                  onError("Failed to activate Gemini Flash Lite");
+                }
+              }}
+              className={`cursor-pointer rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${
+                data.provider === "gemini"
+                  ? "bg-sky-600 text-white shadow-xs"
+                  : "bg-paper text-slate hover:text-ink-800"
+              }`}
+              title="Switch platform AI to Google Gemini 3.5 Flash Lite"
+            >
+              ✨ Gemini Flash
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={openConfigModal}
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-brass/50 bg-brass/10 px-3.5 py-2 text-xs font-semibold text-brass-dark shadow-2xs transition hover:bg-brass/20"
-            title="Configure and switch between Gemini, DeepSeek, Mistral, Local Ollama, or Custom IP"
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-brass/50 bg-brass/10 px-3 py-2 text-xs font-semibold text-brass-dark shadow-2xs transition hover:bg-brass/20"
+            title="Configure all models, parameters, keys and IP endpoints"
           >
             <Sliders className="h-3.5 w-3.5 text-brass-dark" />
-            <span>AI Engine & Providers</span>
+            <span>Settings</span>
           </button>
 
           <button
             type="button"
             onClick={handleProbe}
             disabled={probing}
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-hairline bg-paper-dim px-3.5 py-2 text-xs font-semibold text-ink-800 transition hover:bg-brass/10 hover:text-brass-dark disabled:opacity-50"
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-hairline bg-paper-dim px-3 py-2 text-xs font-semibold text-ink-800 transition hover:bg-brass/10 hover:text-brass-dark disabled:opacity-50"
           >
             {probing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 text-amber-500" />}
-            {probing ? "Probing Gemini…" : "Quick Probe"}
+            {probing ? "Probing…" : `Probe ${data.provider}`}
           </button>
 
           <button
@@ -442,11 +504,10 @@ export function AiMonitoringSection({ onError }: Props) {
       {probeResult && (
         <div
           role="status"
-          className={`flex items-start justify-between gap-3 rounded-2xl border p-4 text-xs transition ${
-            probeResult.ok
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
-              : "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300"
-          }`}
+          className={`flex items-start justify-between gap-3 rounded-2xl border p-4 text-xs transition ${probeResult.ok
+            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
+            : "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300"
+            }`}
         >
           <div className="flex items-start gap-2.5">
             {probeResult.ok ? (
@@ -456,7 +517,7 @@ export function AiMonitoringSection({ onError }: Props) {
             )}
             <div>
               <p className="font-bold">
-                {probeResult.ok ? "Google Gemini API Connection Valid" : "API Connection Issue"}
+                {probeResult.ok ? `${(data.provider || "AI").toUpperCase()} Connection Valid` : "API Connection Issue"}
               </p>
               <p className="mt-0.5 text-[11px] opacity-90">
                 {probeResult.message} · Latency: <strong>{probeResult.latency_ms}ms</strong>
@@ -496,9 +557,8 @@ export function AiMonitoringSection({ onError }: Props) {
             </div>
             <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-paper-dim">
               <div
-                className={`h-full rounded-full transition-all ${
-                  rpdPercentUsed > 80 ? "bg-rose-500" : rpdPercentUsed > 50 ? "bg-amber-500" : "bg-brass"
-                }`}
+                className={`h-full rounded-full transition-all ${rpdPercentUsed > 80 ? "bg-rose-500" : rpdPercentUsed > 50 ? "bg-amber-500" : "bg-brass"
+                  }`}
                 style={{ width: `${Math.max(2, rpdPercentUsed)}%` }}
               />
             </div>
@@ -612,11 +672,17 @@ export function AiMonitoringSection({ onError }: Props) {
         <div className="rounded-2xl border border-hairline bg-paper p-5 shadow-2xs lg:col-span-2">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-bold text-ink-800">Gemini Key & Model Limits Configuration</h3>
-              <p className="mt-0.5 text-xs text-slate">Hard quota ceilings imposed by Google Generative AI</p>
+              <h3 className="text-sm font-bold text-ink-800">
+                {data.model_specs?.display_name || `${data.provider.toUpperCase()} Model`} Configuration
+              </h3>
+              <p className="mt-0.5 text-xs text-slate">
+                {data.provider === "ollama"
+                  ? "Local self-hosted compute specifications on host system"
+                  : `Hard quota ceilings configured for ${data.provider.toUpperCase()}`}
+              </p>
             </div>
             <span className="rounded-lg border border-hairline bg-paper-dim px-2.5 py-1 text-xs font-semibold text-ink-700">
-              {data.model_specs.display_name}
+              {data.model_specs?.display_name || data.model}
             </span>
           </div>
 
@@ -643,7 +709,7 @@ export function AiMonitoringSection({ onError }: Props) {
           <div className="mt-4 rounded-xl border border-brass/25 bg-brass/5 p-3 text-xs text-ink-700">
             <p className="font-semibold text-brass-dark">Enforced Per-User Token Limiting</p>
             <p className="mt-0.5 text-slate">
-              System protects against Gemini 429 quota exhaustion by enforcing individual daily allowances. Users who exceed
+              System protects against {data.provider.toUpperCase()} rate-limit bottlenecks by enforcing individual daily allowances. Users who exceed
               their daily allowance receive courteous notices without taking down system-wide API access.
             </p>
           </div>
@@ -667,14 +733,20 @@ export function AiMonitoringSection({ onError }: Props) {
               <input
                 type="text"
                 value={userSearch}
-                onChange={(e) => setUserSearch(e.target.value)}
+                onChange={(e) => {
+                  setUserSearch(e.target.value);
+                  setUserPage(1);
+                }}
                 placeholder="Search user, email…"
                 className="h-9 w-48 rounded-xl border border-hairline bg-paper-dim pl-9 pr-3 text-xs text-ink-800 outline-none focus:border-brass/60 sm:w-60"
               />
               {userSearch && (
                 <button
                   type="button"
-                  onClick={() => setUserSearch("")}
+                  onClick={() => {
+                    setUserSearch("");
+                    setUserPage(1);
+                  }}
                   className="absolute right-2.5 top-2.5 text-slate hover:text-ink-800"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -687,12 +759,14 @@ export function AiMonitoringSection({ onError }: Props) {
                 <button
                   key={mode}
                   type="button"
-                  onClick={() => setStatusFilter(mode)}
-                  className={`cursor-pointer rounded-lg px-2.5 py-1 capitalize transition ${
-                    statusFilter === mode
-                      ? "bg-paper text-ink-800 shadow-2xs"
-                      : "text-slate hover:text-ink-800"
-                  }`}
+                  onClick={() => {
+                    setStatusFilter(mode);
+                    setUserPage(1);
+                  }}
+                  className={`cursor-pointer rounded-lg px-2.5 py-1 capitalize transition ${statusFilter === mode
+                    ? "bg-paper text-ink-800 shadow-2xs"
+                    : "text-slate hover:text-ink-800"
+                    }`}
                 >
                   {mode}
                 </button>
@@ -723,7 +797,7 @@ export function AiMonitoringSection({ onError }: Props) {
                   </td>
                 </tr>
               ) : (
-                filteredUsers.map((u) => {
+                pagedUsers.map((u) => {
                   const limit = u.daily_token_limit;
                   const isUnlimited = limit <= 0;
                   const pct = isUnlimited ? 0 : u.usage_percent_today;
@@ -755,11 +829,10 @@ export function AiMonitoringSection({ onError }: Props) {
                           type="button"
                           onClick={() => handleToggleUser(u)}
                           title={u.is_ai_enabled ? "Pause AI access" : "Enable AI access"}
-                          className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
-                            u.is_ai_enabled
-                              ? "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20"
-                              : "bg-rose-500/10 text-rose-600 hover:bg-rose-500/20"
-                          }`}
+                          className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${u.is_ai_enabled
+                            ? "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20"
+                            : "bg-rose-500/10 text-rose-600 hover:bg-rose-500/20"
+                            }`}
                         >
                           {u.is_ai_enabled ? (
                             <>
@@ -792,9 +865,8 @@ export function AiMonitoringSection({ onError }: Props) {
                           {!isUnlimited && (
                             <div className="h-1.5 w-full overflow-hidden rounded-full bg-paper-dim">
                               <div
-                                className={`h-full rounded-full ${
-                                  pct >= 100 ? "bg-rose-500" : pct >= 50 ? "bg-amber-500" : "bg-brass"
-                                }`}
+                                className={`h-full rounded-full ${pct >= 100 ? "bg-rose-500" : pct >= 50 ? "bg-amber-500" : "bg-brass"
+                                  }`}
                                 style={{ width: `${Math.min(100, Math.max(2, pct))}%` }}
                               />
                             </div>
@@ -829,6 +901,39 @@ export function AiMonitoringSection({ onError }: Props) {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination */}
+        <div className="flex items-center justify-between border-t border-hairline/70 px-5 py-3 text-xs text-slate">
+          <span>
+            {filteredUsers.length === 0
+              ? "0 users"
+              : `${(currentUserPage - 1) * USERS_PER_PAGE + 1}–${Math.min(
+                  currentUserPage * USERS_PER_PAGE,
+                  filteredUsers.length
+                )} of ${filteredUsers.length} users`}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={currentUserPage <= 1}
+              onClick={() => setUserPage(currentUserPage - 1)}
+              className="cursor-pointer rounded-lg border border-hairline px-3 py-1 font-semibold text-ink-700 transition hover:bg-paper-dim disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <span>
+              Page {currentUserPage} / {totalUserPages}
+            </span>
+            <button
+              type="button"
+              disabled={currentUserPage >= totalUserPages}
+              onClick={() => setUserPage(currentUserPage + 1)}
+              className="cursor-pointer rounded-lg border border-hairline px-3 py-1 font-semibold text-ink-700 transition hover:bg-paper-dim disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
 
@@ -869,7 +974,33 @@ export function AiMonitoringSection({ onError }: Props) {
                       <td className="px-4 py-2.5 capitalize text-ink-700">
                         {log.feature.replace("_", " ")}
                       </td>
-                      <td className="px-4 py-2.5 text-slate">{log.model}</td>
+                      <td className="px-4 py-2.5">
+                        {log.model?.toLowerCase().includes("qwen") || log.model?.toLowerCase().includes("llama") || log.model?.toLowerCase().includes("ollama") ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-md border border-purple-500/25 bg-purple-500/10 px-2 py-0.5 text-[11px] font-mono font-semibold text-purple-700 dark:text-purple-300">
+                            <span className="h-1.5 w-1.5 rounded-full bg-purple-500" />
+                            🦙 {log.model}
+                          </span>
+                        ) : log.model?.toLowerCase().includes("gemini") ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-500/25 bg-sky-500/10 px-2 py-0.5 text-[11px] font-mono font-semibold text-sky-700 dark:text-sky-300">
+                            <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
+                            ✨ {log.model}
+                          </span>
+                        ) : log.model?.toLowerCase().includes("deepseek") ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-md border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] font-mono font-semibold text-blue-700 dark:text-blue-300">
+                            <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                            🐋 {log.model}
+                          </span>
+                        ) : log.model?.toLowerCase().includes("mistral") ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-md border border-orange-500/25 bg-orange-500/10 px-2 py-0.5 text-[11px] font-mono font-semibold text-orange-700 dark:text-orange-300">
+                            <span className="h-1.5 w-1.5 rounded-full bg-orange-500" />
+                            🌪️ {log.model}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 rounded-md border border-hairline bg-paper-dim px-2 py-0.5 text-[11px] font-mono font-medium text-slate">
+                            {log.model || "—"}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-2.5 font-medium text-ink-800">
                         {log.total_tokens.toLocaleString()}{" "}
                         <span className="text-[11px] font-normal text-slate">
@@ -881,13 +1012,12 @@ export function AiMonitoringSection({ onError }: Props) {
                       </td>
                       <td className="px-4 py-2.5">
                         <span
-                          className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${
-                            log.status === "success"
-                              ? "bg-emerald-500/10 text-emerald-600"
-                              : log.status === "rate_limited"
+                          className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${log.status === "success"
+                            ? "bg-emerald-500/10 text-emerald-600"
+                            : log.status === "rate_limited"
                               ? "bg-amber-500/10 text-amber-600"
                               : "bg-rose-500/10 text-rose-600"
-                          }`}
+                            }`}
                         >
                           {log.status}
                         </span>
@@ -933,9 +1063,8 @@ export function AiMonitoringSection({ onError }: Props) {
                 <button
                   type="button"
                   onClick={() => setEditEnabled(!editEnabled)}
-                  className={`cursor-pointer rounded-full p-1 transition ${
-                    editEnabled ? "text-emerald-600" : "text-slate"
-                  }`}
+                  className={`cursor-pointer rounded-full p-1 transition ${editEnabled ? "text-emerald-600" : "text-slate"
+                    }`}
                 >
                   {editEnabled ? <ToggleRight className="h-7 w-7" /> : <ToggleLeft className="h-7 w-7" />}
                 </button>
@@ -957,11 +1086,10 @@ export function AiMonitoringSection({ onError }: Props) {
                       key={val}
                       type="button"
                       onClick={() => setEditLimit(val)}
-                      className={`cursor-pointer rounded-lg border px-2 py-1 text-[11px] font-medium transition ${
-                        editLimit === val
-                          ? "border-brass bg-brass/10 text-brass-dark"
-                          : "border-hairline bg-paper text-slate hover:text-ink-800"
-                      }`}
+                      className={`cursor-pointer rounded-lg border px-2 py-1 text-[11px] font-medium transition ${editLimit === val
+                        ? "border-brass bg-brass/10 text-brass-dark"
+                        : "border-hairline bg-paper text-slate hover:text-ink-800"
+                        }`}
                     >
                       {val === 0 ? "Unlimited" : `${(val / 1000).toFixed(0)}k/day`}
                     </button>
@@ -1078,11 +1206,10 @@ export function AiMonitoringSection({ onError }: Props) {
 
                   {testResult && (
                     <div
-                      className={`flex items-start gap-2.5 rounded-xl border p-3.5 ${
-                        testResult.ok
-                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
-                          : "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300"
-                      }`}
+                      className={`flex items-start gap-2.5 rounded-xl border p-3.5 ${testResult.ok
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
+                        : "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300"
+                        }`}
                     >
                       {testResult.ok ? (
                         <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
@@ -1148,11 +1275,10 @@ export function AiMonitoringSection({ onError }: Props) {
                             onClick={() =>
                               setDraftConfig((prev) => ({ ...prev, provider: prov.id as any }))
                             }
-                            className={`cursor-pointer rounded-2xl border p-2.5 text-left transition ${
-                              active
-                                ? "border-brass bg-brass/10 text-ink-800 shadow-2xs"
-                                : "border-hairline bg-paper-dim text-slate hover:border-slate/40 hover:text-ink-800"
-                            }`}
+                            className={`cursor-pointer rounded-2xl border p-2.5 text-left transition ${active
+                              ? "border-brass bg-brass/10 text-ink-800 shadow-2xs"
+                              : "border-hairline bg-paper-dim text-slate hover:border-slate/40 hover:text-ink-800"
+                              }`}
                           >
                             <span className="block font-bold">{prov.label}</span>
                             <span className="block text-[10px] opacity-80">{prov.desc}</span>
@@ -1429,14 +1555,14 @@ export function AiMonitoringSection({ onError }: Props) {
                           <div className="flex items-center gap-2">
                             <input
                               type="text"
-                              value={draftConfig.ollama?.base_url || "http://host.docker.internal:11435"}
+                              value={draftConfig.ollama?.base_url || "http://host.docker.internal:11434"}
                               onChange={(e) =>
                                 setDraftConfig((prev) => ({
                                   ...prev,
                                   ollama: { ...prev.ollama, base_url: e.target.value },
                                 }))
                               }
-                              placeholder="http://host.docker.internal:11435"
+                              placeholder="http://host.docker.internal:11434"
                               className="w-full rounded-xl border border-hairline bg-paper px-3 py-2 text-xs text-ink-800 font-mono outline-none focus:border-brass/70"
                             />
                             <button
@@ -1451,10 +1577,10 @@ export function AiMonitoringSection({ onError }: Props) {
                           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                             <span className="text-[10px] text-slate font-medium">Quick Endpoints:</span>
                             {[
-                              { label: "Host Bridge (socat :11435)", url: "http://host.docker.internal:11435" },
                               { label: "Direct Host (:11434)", url: "http://host.docker.internal:11434" },
-                              { label: "Localhost", url: "http://localhost:11434" },
-                              { label: "Docker Gateway", url: "http://172.17.0.1:11434" },
+                              { label: "Localhost (:11434)", url: "http://localhost:11434" },
+                              { label: "Host Bridge (:11435)", url: "http://host.docker.internal:11435" },
+                              { label: "Docker Gateway (:11434)", url: "http://172.17.0.1:11434" },
                             ].map((preset) => (
                               <button
                                 key={preset.url}
@@ -1499,13 +1625,12 @@ export function AiMonitoringSection({ onError }: Props) {
                                 </div>
                                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate/15">
                                   <div
-                                    className={`h-full transition-all duration-500 ${
-                                      localSystem.cpu_percent > 85
-                                        ? "bg-rose-500"
-                                        : localSystem.cpu_percent > 60
+                                    className={`h-full transition-all duration-500 ${localSystem.cpu_percent > 85
+                                      ? "bg-rose-500"
+                                      : localSystem.cpu_percent > 60
                                         ? "bg-amber-500"
                                         : "bg-emerald-500"
-                                    }`}
+                                      }`}
                                     style={{ width: `${Math.min(100, Math.max(0, localSystem.cpu_percent))}%` }}
                                   />
                                 </div>
@@ -1522,13 +1647,12 @@ export function AiMonitoringSection({ onError }: Props) {
                                 </div>
                                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate/15">
                                   <div
-                                    className={`h-full transition-all duration-500 ${
-                                      localSystem.ram_percent > 85
-                                        ? "bg-rose-500"
-                                        : localSystem.ram_percent > 65
+                                    className={`h-full transition-all duration-500 ${localSystem.ram_percent > 85
+                                      ? "bg-rose-500"
+                                      : localSystem.ram_percent > 65
                                         ? "bg-amber-500"
                                         : "bg-purple-500"
-                                    }`}
+                                      }`}
                                     style={{ width: `${Math.min(100, Math.max(0, localSystem.ram_percent))}%` }}
                                   />
                                 </div>
@@ -1603,7 +1727,9 @@ export function AiMonitoringSection({ onError }: Props) {
                           {!localModelsLoading && localModels.length > 0 && (
                             <div className="space-y-3">
                               {localModels.map((m) => {
-                                const isCurrentActive = draftConfig.ollama?.model === m.name;
+                                const isCurrentActive =
+                                  (aiConfig?.provider === "ollama" || draftConfig.provider === "ollama") &&
+                                  (aiConfig?.ollama?.model === m.name || draftConfig.ollama?.model === m.name);
                                 const bench = benchmarks[m.name];
                                 const isBenchmarking = benchmarkingModel === m.name;
                                 const isSelecting = selectingModel === m.name;
@@ -1611,11 +1737,10 @@ export function AiMonitoringSection({ onError }: Props) {
                                 return (
                                   <div
                                     key={m.name}
-                                    className={`relative rounded-xl border p-3.5 transition-all ${
-                                      isCurrentActive
-                                        ? "border-brass bg-brass/5 shadow-xs"
-                                        : "border-hairline bg-paper hover:border-slate/40"
-                                    }`}
+                                    className={`relative rounded-xl border p-3.5 transition-all ${isCurrentActive
+                                      ? "border-brass bg-brass/5 shadow-xs"
+                                      : "border-hairline bg-paper hover:border-slate/40"
+                                      }`}
                                   >
                                     {/* Header Row */}
                                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1660,11 +1785,10 @@ export function AiMonitoringSection({ onError }: Props) {
                                           type="button"
                                           onClick={() => handleSelectModel(m.name)}
                                           disabled={isCurrentActive || isSelecting}
-                                          className={`inline-flex cursor-pointer items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-default ${
-                                            isCurrentActive
-                                              ? "bg-emerald-600 text-white"
-                                              : "bg-ink text-paper hover:bg-ink-700"
-                                          }`}
+                                          className={`inline-flex cursor-pointer items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-default ${isCurrentActive
+                                            ? "bg-emerald-600 text-white"
+                                            : "bg-ink text-paper hover:bg-ink-700"
+                                            }`}
                                         >
                                           {isSelecting ? (
                                             <Loader2 className="h-3 w-3 animate-spin" />
@@ -1674,8 +1798,8 @@ export function AiMonitoringSection({ onError }: Props) {
                                           {isSelecting
                                             ? "Activating…"
                                             : isCurrentActive
-                                            ? "Current AI"
-                                            : "Use This Model"}
+                                              ? "Current AI"
+                                              : "Use This Model"}
                                         </button>
                                       </div>
                                     </div>
@@ -1707,11 +1831,10 @@ export function AiMonitoringSection({ onError }: Props) {
                                     {/* Benchmark Test Result Display */}
                                     {bench && (
                                       <div
-                                        className={`mt-2.5 rounded-lg border p-2.5 text-xs ${
-                                          bench.ok
-                                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
-                                            : "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300"
-                                        }`}
+                                        className={`mt-2.5 rounded-lg border p-2.5 text-xs ${bench.ok
+                                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
+                                          : "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300"
+                                          }`}
                                       >
                                         <div className="flex flex-wrap items-center justify-between gap-1.5 font-bold">
                                           <span className="flex items-center gap-1">
@@ -1777,14 +1900,14 @@ export function AiMonitoringSection({ onError }: Props) {
                           </label>
                           <input
                             type="text"
-                            value={draftConfig.ollama?.model || "qwen2.5-coder:3b"}
+                            value={draftConfig.ollama?.model || "qwen3.5:7b"}
                             onChange={(e) =>
                               setDraftConfig((prev) => ({
                                 ...prev,
                                 ollama: { ...prev.ollama, model: e.target.value },
                               }))
                             }
-                            placeholder="e.g. qwen2.5-coder:3b"
+                            placeholder="e.g. qwen3.5:7b"
                             className="w-full rounded-xl border border-hairline bg-paper px-3 py-2 text-xs font-mono text-ink-800 outline-none focus:border-brass/70"
                           />
                         </div>

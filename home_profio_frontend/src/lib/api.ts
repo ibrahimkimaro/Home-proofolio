@@ -76,6 +76,11 @@ async function send<T>(path: string, options: RequestInit = {}): Promise<T> {
     if (res.status === 403 && message === "account_suspended" && typeof window !== "undefined" && window.location.pathname !== "/suspended") {
       window.location.assign("/suspended");
     }
+    // Session expired or ended (e.g. signed out on another device): a signed-in user is sent back to login.
+    if (res.status === 401 && !path.startsWith("/auth/login") && !path.startsWith("/auth/register") && typeof window !== "undefined" && getCachedUser({ allowStale: true })) {
+      clearAllAuthStorage();
+      if (!/^\/(login|register|signup)/.test(window.location.pathname)) window.location.assign("/login");
+    }
     throw new ApiError(res.status, message === "account_suspended" ? "Your account is suspended. Activate it to continue." : message);
   }
 
@@ -511,7 +516,7 @@ export const savePortfolio = (p: PortfolioSettings) =>
   request<PortfolioSettings>("/me/portfolio", { method: "PUT", body: JSON.stringify(p) });
 
 export interface HomeData {
-  counts: { items: number; proofs: number; public: number; days_active: number; followers: number };
+  counts: { items: number; proofs: number; public: number; days_active: number; likes: number; followers: number };
   roles: string[];
   activity: { week: string; changes: number }[];
   portfolio: PortfolioSettings;
@@ -1864,7 +1869,7 @@ export const selectLocalModel = (data: { model: string; endpoint?: string }) =>
 
 /** Public website: one turn with the AI support assistant. No account needed; it sees no user data. */
 export const askSupportAi = (message: string, history: string[] = [], name?: string | null) =>
-  request<{ reply: string }>("/ai/support", {
+  request<{ reply: string; name?: string | null }>("/ai/support", {
     method: "POST",
     body: JSON.stringify({ message, history, name: name || null }),
   });
@@ -1978,3 +1983,72 @@ export const updateStoryChapter = (storyId: string, chapterId: string, payload: 
 export const deleteStoryChapter = (storyId: string, chapterId: string) =>
   request<void>(`/stories/${storyId}/chapters/${chapterId}`, { method: "DELETE" });
 
+// ---------- Legal Documents & Policies ----------
+
+export interface LegalDocument {
+  id: string;
+  slug: string;
+  title: string;
+  content: string;
+  summary?: string | null;
+  version: string;
+  is_published: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateLegalDocPayload {
+  slug: string;
+  title: string;
+  content: string;
+  summary?: string;
+  version?: string;
+  is_published?: boolean;
+}
+
+export interface UpdateLegalDocPayload {
+  slug?: string;
+  title?: string;
+  content?: string;
+  summary?: string;
+  version?: string;
+  is_published?: boolean;
+}
+
+export const fetchPublicLegalDocs = () => request<LegalDocument[]>("/legal");
+export const fetchPublicLegalDoc = (slug: string) => request<LegalDocument>(`/legal/${slug}`);
+export const fetchAdminLegalDocs = () => request<LegalDocument[]>("/admin/legal");
+export const createAdminLegalDoc = (payload: CreateLegalDocPayload) =>
+  request<LegalDocument>("/admin/legal", { method: "POST", body: JSON.stringify(payload) });
+export const updateAdminLegalDoc = (id: string, payload: UpdateLegalDocPayload) =>
+  request<LegalDocument>(`/admin/legal/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+export const deleteAdminLegalDoc = (id: string) =>
+  request<{ detail: string }>(`/admin/legal/${id}`, { method: "DELETE" });
+
+
+
+// ---------- Visitor tracking (backend app/api/site_visits.py) ----------
+
+export function trackVisit(visitorId: string, path: string, referrer?: string) {
+  return fetch(`${API_URL}/track/visit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ visitor_id: visitorId, path, referrer: referrer || undefined }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+export type VisitRange = "today" | "yesterday" | "7d" | "30d";
+export interface AdminVisits {
+  range: VisitRange;
+  views: number;
+  visitors: number;
+  new_visitors: number;
+  returning_visitors: number;
+  bucket: "hour" | "day";
+  series: { at: string; views: number; visitors: number }[];
+  top_pages: { label: string; value: number }[];
+  devices: { label: string; value: number }[];
+  recent: { visitor_id: string; name: string | null; email: string | null; last_seen: string; views: number; device: string | null; ip: string | null }[];
+}
+export const fetchAdminVisits = (range: VisitRange) => request<AdminVisits>(`/admin/visits?range=${range}`);

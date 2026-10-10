@@ -107,8 +107,18 @@ export function useSession() {
         });
     }
 
+    // Expiry while the tab sits open: re-check when the tab regains focus and every 2 minutes.
+    // A 401 here clears the session (see send() in lib/api.ts) and the user-cleared event sends them to /login.
+    const recheck = () => {
+      if (document.visibilityState === "visible" && getCachedSessionUser()) fetchCurrentUser({ force: true }).catch(() => {});
+    };
+    document.addEventListener("visibilitychange", recheck);
+    const timer = window.setInterval(recheck, 120_000);
+
     return () => {
       active = false;
+      document.removeEventListener("visibilitychange", recheck);
+      window.clearInterval(timer);
       window.removeEventListener("proofolio:user-updated", onUserUpdated);
       window.removeEventListener("proofolio:user-cleared", onUserCleared);
     };

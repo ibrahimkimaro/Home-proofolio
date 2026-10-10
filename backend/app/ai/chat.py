@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.agent import AgentResult, earlier_turns, history_messages, run_agent
 from app.ai.companion import companion_prompt, load_companion
 from app.ai.db_context import user_profile_context, user_full_database_summary, user_work_context
-from app.ai.engine import PERSONA, WORKSPACE_NOTE, ConnectedEngine, explain_error, system_prompt
+from app.ai.engine import PERSONA, WORKSPACE_NOTE, ConnectedEngine, clean_ai_response_text, explain_error, system_prompt
 from app.ai.knowledge import relevant_knowledge
 from app.ai.mcp_client import general_tools
 from app.ai.security_guard import sanitize_user_prompt
@@ -188,8 +188,9 @@ async def answer(engine: ConnectedEngine, db: AsyncSession, user_id, who: str, m
     history: earlier turns as "User: ..." / "AI: ..." lines, oldest first.
     dev=True (developer dashboard only) also gives the model the sandbox file tools and the extra MCP servers.
     """
-    from app.ai.engine import load_ai_config_from_db
+    from app.ai.engine import load_ai_config_from_db, get_engine
     await load_ai_config_from_db(db)
+    engine = get_engine()
     history = earlier_turns(history, message)
 
     c = await load_companion(db, user_id)
@@ -219,7 +220,11 @@ async def answer(engine: ConnectedEngine, db: AsyncSession, user_id, who: str, m
         return AgentResult(await _story_reply(engine, db, user_id, message, companion), ["write_story_from_memories"])
 
     permissions = set(c.access_permissions)
-    is_ollama = getattr(settings, "ai_provider", "").lower() == "ollama"
+    from app.ai.engine import get_active_ai_config, get_active_model_name
+    active_cfg = get_active_ai_config()
+    active_provider = (active_cfg.get("provider") or "gemini").lower()
+    is_ollama = active_provider == "ollama"
+    active_model = get_active_model_name()
     needs_tools = bool(
         need
         or DATA_Q.search(message)
@@ -275,6 +280,7 @@ async def answer(engine: ConnectedEngine, db: AsyncSession, user_id, who: str, m
             user_id=user_id,
             feature="companion_chat",
             endpoint="/ai/chat",
+            model=active_model,
             status="quota_exceeded",
             error_message=quota_err,
         )
@@ -283,11 +289,13 @@ async def answer(engine: ConnectedEngine, db: AsyncSession, user_id, who: str, m
     try:
         agent_res = await run_agent(engine.think_llm if deep else engine.llm, system, history_messages(history), message, tools,
                                    on_state=on_state, think_state="reasoning" if deep else "thinking")
+        agent_res.text = clean_ai_response_text(agent_res.text)
         await record_ai_usage(
             db,
             user_id=user_id,
             feature="companion_chat",
             endpoint="/ai/chat",
+            model=active_model,
             prompt_tokens=agent_res.prompt_tokens,
             completion_tokens=agent_res.completion_tokens,
             total_tokens=agent_res.total_tokens,
@@ -302,6 +310,7 @@ async def answer(engine: ConnectedEngine, db: AsyncSession, user_id, who: str, m
             user_id=user_id,
             feature="companion_chat",
             endpoint="/ai/chat",
+            model=active_model,
             status=status_flag,
             error_message=str(exc)[:400],
         )
@@ -310,38 +319,40 @@ async def answer(engine: ConnectedEngine, db: AsyncSession, user_id, who: str, m
         low = message.lower()
         if GREETING_Q.search(message):
             if SWAHILI_GREETING_Q.search(message):
-                return AgentResult(f"Habari {user_name}! Ninawezaje kukusaidia leo?")
-            return AgentResult(f"Hello {user_name}! Great to see you. How are things going today?")
+                return AgentResult(clean_ai_response_text(f"Habari {user_name}! Ninawezaje kukusaidia leo?"))
+            return AgentResult(clean_ai_response_text(f"Hello {user_name}! Great to see you. How are things going today?"))
         if MESSAGE_Q.search(message) and GATE in permissions:
             try:
                 from app.ai.db_context import user_messages_context
                 msgs = await user_messages_context(db, user_id)
-                return AgentResult(f"Habari! Here is your messages overview from the HOME PROOFOLIO database:\n\n{msgs}")
+                return AgentResult(clean_ai_response_text(f"Habari! Here is your messages overview from the HOME PROOFOLIO database:\n\n{msgs}"))
             except Exception as me:
                 log.warning("Could not fetch messages fallback: %s", me)
         if CHART_Q.search(message) and (DATA_Q.search(message) or "portfolio" in low or "work" in low or "detail" in low):
             try:
                 from app.ai.tools import chart_portfolio_overview
                 chart_block = await chart_portfolio_overview(db, user_id, breakdown="visibility", chart_type="bar", title="Portfolio Overview: Works Breakdown")
-                return AgentResult(f"Here is your interactive portfolio overview chart based on your verified database records:\n\n{chart_block}\n\nYou can switch between bar chart, line chart, pie chart, or table view directly from the chart toolbar!")
+                return AgentResult(clean_ai_response_text(f"Here is your interactive portfolio overview chart based on your verified database records:\n\n{chart_block}\n\nYou can switch between bar chart, line chart, pie chart, or table view directly from the chart toolbar!"))
             except Exception as ce:
                 log.warning("Fallback chart generation error: %s", ce)
         if PROFILE_Q.search(message) or any(w in low for w in ["profile", "who am i", "my details", "about me", "email", "phone", "wasifu"]):
             ctx = await user_profile_context(db, user_id)
-            return AgentResult(f"Habari! Here is your verified profile information from your HOME PROOFOLIO database:\n\n{ctx}")
+            return AgentResult(clean_ai_response_text(f"Habari! Here is your verified profile information from your HOME PROOFOLIO database:\n\n{ctx}"))
         if DATA_Q.search(message) or any(w in low for w in ["work", "project", "proof", "item", "overview", "portfolio", "database", "db"]):
             ctx = await user_full_database_summary(db, user_id)
-            return AgentResult(f"Habari! Here are your database records from HOME PROOFOLIO:\n\n{ctx}\n\nLet me know which item you would like to explore or expand!")
+            return AgentResult(clean_ai_response_text(f"Habari! Here are your database records from HOME PROOFOLIO:\n\n{ctx}\n\nLet me know which item you would like to explore or expand!"))
         if "story" in low or "journey" in low or "hadithi" in low:
             try:
-                return AgentResult(await _story_reply(engine, db, user_id, message, companion), ["write_story_from_memories"])
+                story_res = await _story_reply(engine, db, user_id, message, companion)
+                return AgentResult(clean_ai_response_text(story_res), ["write_story_from_memories"])
             except Exception:
                 pass
         know = relevant_knowledge(message)
         if know:
             summary = "\n".join(line for line in know.split("\n") if line.strip() and not line.startswith("#"))[:450]
-            return AgentResult(f"Hi! Regarding {message}:\n\n{summary}\n\nFeel free to ask me about your profile, work items, or stories anytime!")
-        return AgentResult(f"Hello {user_name}! I am {name}, your companion on HOME PROOFOLIO. I am connected to your private workspace. Ask me about your profile, work items, projects, or stories anytime! 😊")
+            return AgentResult(clean_ai_response_text(f"Hi! Regarding {message}:\n\n{summary}\n\nFeel free to ask me about your profile, work items, or stories anytime!"))
+        return AgentResult(clean_ai_response_text(f"Hello {user_name}! I am {name}, your companion on HOME PROOFOLIO. I am connected to your private workspace. Ask me about your profile, work items, projects, or stories anytime! 😊"))
+
 
 
 async def reply(engine: ConnectedEngine, db: AsyncSession, user_id, who: str, message: str, history: list[str], dev: bool = False) -> str:

@@ -1,14 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Headset, Send, Sparkles } from "lucide-react";
-import { ApiError, askSupportAi } from "@/lib/api";
+import Link from "next/link";
+import { ArrowRight, Headset, LogIn, Send, Sparkles } from "lucide-react";
+import { ApiError, askSupportAi, fetchCurrentUser, initGuestSupport } from "@/lib/api";
+import { getOrCreateGuestSessionId, readGuestEmail, readGuestMemory, rememberGuestEmail, rememberGuestName } from "@/lib/guest";
 import { AiMarkdown } from "@/components/ai/AiMarkdown";
 
 type Turn = { role: "user" | "assistant"; content: string };
 
 const STORE = "proofolio_support_ai";
-const IDEAS = ["What is HOME PROOFOLIO?", "Is it free?", "Is it for my kind of work?", "How do I start?"];
+const IDEAS = [
+  "How does this system help me?",
+  "What is HOME PROOFOLIO?",
+  "Is it for my kind of work?",
+  "What are the privacy policies & terms?",
+  "How do I start?",
+];
 
 function readTurns(): Turn[] {
   try {
@@ -26,10 +34,60 @@ function readTurns(): Turn[] {
 export function SupportAiChat({ name, onHuman }: { name?: string | null; onHuman: () => void }) {
   // Mounted only after the visitor opens the support window, so reading storage here is safe.
   const [turns, setTurns] = useState<Turn[]>(readTurns);
+  const [activeName, setActiveName] = useState<string | null>(() => {
+    if (name) return name;
+    if (typeof window !== "undefined") {
+      const mem = readGuestMemory();
+      return mem.name || null;
+    }
+    return null;
+  });
+  // Before the AI answers, a guest says who they are: a name or an email (one is enough). Members are known already.
+  const [known, setKnown] = useState<boolean>(() => typeof window !== "undefined" && !!(name || readGuestMemory().name || readGuestEmail()));
+  const [gName, setGName] = useState("");
+  const [gEmail, setGEmail] = useState("");
+  const [introBusy, setIntroBusy] = useState(false);
+  const [introError, setIntroError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetchCurrentUser().then(() => setKnown(true)).catch(() => {});
+  }, []);
+
+  async function saveIntro(e: React.FormEvent) {
+    e.preventDefault();
+    const n = gName.trim();
+    const em = gEmail.trim();
+    if (!n && !em) {
+      setIntroError("Please enter your name or your email.");
+      return;
+    }
+    setIntroBusy(true);
+    setIntroError(null);
+    try {
+      // Saved as a guest on this browser's session id, so the team sees who they are talking to.
+      const g = await initGuestSupport(getOrCreateGuestSessionId(), n || undefined, em || undefined);
+      if (g.display_name) {
+        rememberGuestName(g.display_name);
+        setActiveName(g.display_name);
+      }
+      if (em) rememberGuestEmail(em);
+      setKnown(true);
+    } catch (err) {
+      setIntroError(err instanceof Error ? err.message : "Couldn't save that. Please check it and try again.");
+    } finally {
+      setIntroBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (name && name !== activeName) {
+      setActiveName(name);
+    }
+  }, [name, activeName]);
 
   useEffect(() => {
     try {
@@ -48,7 +106,11 @@ export function SupportAiChat({ name, onHuman }: { name?: string | null; onHuman
     setTurns((prev) => [...prev, { role: "user", content: message }]);
     setBusy(true);
     try {
-      const res = await askSupportAi(message, history, name);
+      const res = await askSupportAi(message, history, activeName);
+      if (res.name && res.name !== activeName) {
+        setActiveName(res.name);
+        rememberGuestName(res.name);
+      }
       setTurns((prev) => [...prev, { role: "assistant", content: res.reply }]);
     } catch (e) {
       setError(
@@ -64,11 +126,34 @@ export function SupportAiChat({ name, onHuman }: { name?: string | null; onHuman
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-paper">
       <div className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-5" aria-live="polite">
+        {!known ? (
+          <form onSubmit={saveIntro} className="space-y-3">
+            <Bubble role="assistant">
+              <p>Welcome to HOME PROOFOLIO! Before we chat, please tell me your <strong>name</strong> or your <strong>email</strong> (one is enough).</p>
+            </Bubble>
+            <div className="space-y-2 pl-9">
+              <input value={gName} onChange={(e) => setGName(e.target.value)} maxLength={40} placeholder="Your name" aria-label="Your name" className="w-full rounded-xl border border-hairline/80 bg-paper px-3.5 py-2.5 text-sm text-ink-900 outline-none focus:border-ink" />
+              <input type="email" value={gEmail} onChange={(e) => setGEmail(e.target.value)} maxLength={120} placeholder="Or your email" aria-label="Your email" className="w-full rounded-xl border border-hairline/80 bg-paper px-3.5 py-2.5 text-sm text-ink-900 outline-none focus:border-ink" />
+              {introError && <p role="alert" className="text-xs text-red-600">{introError}</p>}
+              <button type="submit" disabled={introBusy || (!gName.trim() && !gEmail.trim())} className="flex h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-ink text-sm font-semibold text-paper transition hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-50">
+                Continue <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
         {/* Greeting: always the first bubble, never sent to the model. */}
         <Bubble role="assistant">
           <p>
-            {name ? `Hi ${name}! ` : "Hi! "}I&apos;m the HOME PROOFOLIO assistant. Ask me anything about the platform, or tell me what kind of work you do and
-            I&apos;ll show you how it fits.
+            {activeName ? (
+              <>
+                Hi <strong className="font-semibold text-ink-900">{activeName}</strong>! Welcome to HOME PROOFOLIO. Ask me anything about how the platform works, how it proves your skills, or how it elevates your specific work.
+              </>
+            ) : (
+              <>
+                Welcome to HOME PROOFOLIO! I&apos;m your platform assistant. Before we get started, may I ask your name so I know who I&apos;m chatting with? You can also ask me anything about how the platform helps your work.
+              </>
+            )}
           </p>
         </Bubble>
 
@@ -90,7 +175,14 @@ export function SupportAiChat({ name, onHuman }: { name?: string | null; onHuman
 
         {turns.map((t, i) => (
           <Bubble key={i} role={t.role}>
-            {t.role === "assistant" ? <AiMarkdown content={t.content} /> : <p className="whitespace-pre-wrap">{t.content}</p>}
+            {t.role === "assistant" ? (
+              <>
+                <AiMarkdown content={withoutRoutes(t.content)} />
+                <RouteButtons text={t.content} />
+              </>
+            ) : (
+              <p className="whitespace-pre-wrap">{t.content}</p>
+            )}
           </Bubble>
         ))}
 
@@ -109,6 +201,8 @@ export function SupportAiChat({ name, onHuman }: { name?: string | null; onHuman
             {error}
           </p>
         )}
+          </>
+        )}
         <div ref={endRef} />
       </div>
 
@@ -122,6 +216,7 @@ export function SupportAiChat({ name, onHuman }: { name?: string | null; onHuman
         >
           <input
             value={input}
+            disabled={!known}
             onChange={(e) => setInput(e.target.value)}
             maxLength={1000}
             placeholder="Ask about HOME PROOFOLIO…"
@@ -168,6 +263,33 @@ function Bubble({ role, children }: { role: Turn["role"]; children: ReactNode })
       <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-hairline/70 bg-paper-dim/60 px-3.5 py-2.5 text-[13px] leading-relaxed text-ink-900">
         {children}
       </div>
+    </div>
+  );
+}
+
+/** The model may mention routes like /start in its text; show them as buttons instead of asking people to type them. */
+function withoutRoutes(text: string): string {
+  return text
+    .replace(/\b(?:visit|go to|open|head to|type)\s+\/(?:start|login)\b[^.!\n]*[.!]?/gi, "Use the button below.")
+    .replace(/\/(?:start|login)\b/g, "the button below");
+}
+
+function RouteButtons({ text }: { text: string }) {
+  const start = /\/start\b|start your proofolio/i.test(text);
+  const login = /\/login\b|sign in/i.test(text);
+  if (!start && !login) return null;
+  return (
+    <div className="mt-2.5 flex flex-wrap gap-2">
+      {start && (
+        <Link href="/start" className="inline-flex items-center gap-1.5 rounded-xl bg-ink px-3.5 py-2 text-[12px] font-semibold text-paper transition hover:bg-ink-700">
+          Start your proofolio <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      )}
+      {login && (
+        <Link href="/login" className="inline-flex items-center gap-1.5 rounded-xl border border-hairline bg-paper px-3.5 py-2 text-[12px] font-semibold text-ink-800 transition hover:border-brass/60">
+          <LogIn className="h-3.5 w-3.5" /> Sign in
+        </Link>
+      )}
     </div>
   );
 }

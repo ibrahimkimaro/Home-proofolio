@@ -60,8 +60,8 @@ export function AnalyticsSection({ onError }: { onError: (msg: string) => void }
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Kpi label="New members" value={t!.new_users} prev={t!.new_users_prev} />
             <Kpi label="Active members" value={t!.active_members} prev={t!.active_members_prev} />
-            <Kpi label="Public items" value={t!.public_works} hint={`${t!.works} items in total`} />
-            <Kpi label="Proofs attached" value={t!.proofs} hint={`${t!.public_profiles} public profiles · ${t!.follows} follows`} />
+            <Kpi label="Public profiles" value={t!.public_profiles} />
+            <Kpi label="Follows" value={t!.follows} />
           </div>
 
           {/* Small multiples: one measure per chart, same time axis — never a dual axis. */}
